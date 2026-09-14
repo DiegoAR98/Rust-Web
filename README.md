@@ -27,6 +27,7 @@ docs/milestones     current and completed milestone briefs
 
 - [x] M0 - monorepo, tooling, content schema (verified 2026-09-14)
 - [x] M1 - shared sim loop, player movement, camera, replica codec (verified 2026-09-14)
+- [x] M-1B - browser/server spike: deterministic Rapier in Node (ADR-0005), node:sqlite world persistence + recovery, two-client gates (verified 2026-09-14, docs/milestones/M-1B-brief.md)
 - [ ] M2+ - see GDD §25 production roadmap
 
 ## Development

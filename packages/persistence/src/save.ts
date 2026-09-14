@@ -1,6 +1,9 @@
 /**
- * Save schema (GDD Appendix G).
- * M0 defines the shape; the SQLite repository lands with M-1B.
+ * World save schema, version 1 (GDD Appendix G / §21).
+ *
+ * `WorldSave` is the host's in-memory save document. The SQLite repository
+ * (repository.ts) is the only place that persists it; JSON export/import is
+ * a debug/backup side channel, not the live write path.
  */
 import type { ItemStack, Vec3, Vitals } from "@dustfall/contracts";
 
