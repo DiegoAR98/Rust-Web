@@ -1,0 +1,24 @@
+{
+  "name": "frontier-legacy-dustfall",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Frontier Legacy: Dustfall - browser-first western survival, authoritative Node host",
+  "packageManager": "pnpm@10.34.5",
+  "engines": {
+    "node": ">=24.21.0 <25.0.0"
+  },
+  "scripts": {
+    "build": "pnpm -r build",
+    "lint": "pnpm -r lint",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "content:validate": "pnpm --filter @dustfall/content validate",
+    "dev:server": "pnpm --filter @dustfall/server dev",
+    "dev:client": "pnpm --filter @dustfall/client dev"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.8.0",
+    "vitest": "^3.0.0"
+  }
+}
