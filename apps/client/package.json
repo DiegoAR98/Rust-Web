@@ -1,0 +1,26 @@
+{
+  "name": "@dustfall/client",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests",
+    "lint": "echo lint: client"
+  },
+  "dependencies": {
+    "@dustfall/contracts": "workspace:*",
+    "@dustfall/content": "workspace:*",
+    "@dustfall/protocol": "workspace:*",
+    "@dustfall/physics": "workspace:*",
+    "@msgpack/msgpack": "^3.0.0",
+    "three": "^0.170.0"
+  },
+  "devDependencies": {
+    "vite": "^6.0.0",
+    "@types/three": "^0.170.0"
+  }
+}
