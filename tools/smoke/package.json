@@ -1,0 +1,16 @@
+{
+  "name": "@dustfall/smoke",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Network smoke tests against a running host (GDD §26 browser/server integration)",
+  "scripts": {
+    "two-clients": "node src/two-clients.mjs",
+    "browser-load": "node src/browser-load.mjs"
+  },
+  "dependencies": {
+    "@msgpack/msgpack": "^3.0.0",
+    "playwright": "^1.57.0",
+    "ws": "^8.18.0"
+  }
+}
