@@ -109,6 +109,9 @@ importers:
 
   packages/physics:
     dependencies:
+      '@dimforge/rapier3d-deterministic-compat':
+        specifier: ^0.20.0
+        version: 0.20.0
       '@dustfall/contracts':
         specifier: workspace:*
         version: link:../contracts
@@ -158,7 +161,16 @@ importers:
         specifier: ^8.18.0
         version: 8.21.3
 
+  tools/spike:
+    dependencies:
+      '@dimforge/rapier3d-deterministic-compat':
+        specifier: ^0.20.0
+        version: 0.20.0
+
 packages:
+
+  '@dimforge/rapier3d-deterministic-compat@0.20.0':
+    resolution: {integrity: sha512-kODprI9mdSm6idjbCuyRmwyVbSqFL3wvY7wOvu//eJqbqRjYc9pUMI0bSLBZt/IV+Vwzkh/Xi9nGVBJLnJgWOg==}
 
   '@esbuild/aix-ppc64@0.25.12':
     resolution: {integrity: sha512-Hhmwd6CInZ3dwpuGTF8fJG6yoWmsToE+vYgD4nytZVxcu1ulHpUQRAB1UJ8+N1Am3Mz4+xOByoQoSZf4D+CpkA==}
@@ -950,6 +962,8 @@ packages:
     resolution: {integrity: sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==}
 
 snapshots:
+
+  '@dimforge/rapier3d-deterministic-compat@0.20.0': {}
 
   '@esbuild/aix-ppc64@0.25.12':
     optional: true
