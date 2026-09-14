@@ -1,0 +1,21 @@
+{
+  "name": "@dustfall/testkit",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests",
+    "lint": "echo lint: testkit"
+  },
+  "dependencies": {
+    "@dustfall/contracts": "workspace:*",
+    "@dustfall/sim": "workspace:*",
+    "@dustfall/content": "workspace:*"
+  }
+}
