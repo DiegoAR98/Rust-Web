@@ -1,0 +1,29 @@
+{
+  "name": "@dustfall/server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts",
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "lint": "echo lint: server"
+  },
+  "dependencies": {
+    "@dustfall/contracts": "workspace:*",
+    "@dustfall/content": "workspace:*",
+    "@dustfall/protocol": "workspace:*",
+    "@dustfall/sim": "workspace:*",
+    "@dustfall/physics": "workspace:*",
+    "@dustfall/persistence": "workspace:*",
+    "@msgpack/msgpack": "^3.0.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.5.0",
+    "tsx": "^4.19.0"
+  }
+}
