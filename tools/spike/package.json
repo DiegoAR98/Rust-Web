@@ -1,0 +1,13 @@
+{
+  "name": "@dustfall/spike",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "One-shot feasibility spikes for the authoritative host stack (deterministic Rapier in Node, node:sqlite)",
+  "scripts": {
+    "rapier-node": "node rapier-node.mjs"
+  },
+  "dependencies": {
+    "@dimforge/rapier3d-deterministic-compat": "^0.20.0"
+  }
+}
