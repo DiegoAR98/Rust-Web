@@ -57,7 +57,7 @@ export interface TickEvents {
     payout: number;
     secondaries: { itemId: string; quantity: number }[];
     depleted: boolean;
-  }[]>;
+  }>;
   /** durable death transactions committed this tick (Class A, GDD §21.9) */
   deaths: DeathTransaction[];
   /** node entities that respawned this tick */

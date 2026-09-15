@@ -100,7 +100,7 @@ export const dropToGround = (
  * Range is proven server-side (loot.pickup_reach_m, GDD §21.4).
  */
 export const loot = (
-  world: World,
+  _world: World,
   store: EntityStore,
   p: PlayerEntity,
   sourceEntityId: string,

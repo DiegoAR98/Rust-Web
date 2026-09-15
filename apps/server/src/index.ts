@@ -2,19 +2,29 @@
 /**
  * Dustfall host entrypoint.
  * HTTP + WebSocket gateway on one port; 30 Hz simulation loop; 15 Hz replicas.
+ *
+ * M2 handshake flow (GDD §22.4):
+ *   connect -> server JSON {challenge: {sessionId, nonce}}
+ *           -> client msgpack {kind: "identity", publicKey, signature}
+ *           -> server JSON session_grant + msgpack baseline snapshot
+ *           -> client msgpack {kind: "baseline_ack", baselineId}
+ *           -> Ready; gameplay envelopes (msgpack) accepted from here on.
+ *
+ * Reconnect within 5 minutes resumes the same player (body, inventory and
+ * loot persist in the world); a newer identity socket invalidates the older.
  */
 import { createServer } from "node:http";
 import { WebSocketServer, WebSocket, type RawData } from "ws";
 import { decode } from "@msgpack/msgpack";
 import { loadConfig, type ServerConfig } from "./config.js";
 import { Host } from "./host.js";
-import { type Session } from "./session.js";
+import { HANDSHAKE_TIMEOUT_MS } from "./identity.js";
 
 const config: ServerConfig = loadConfig();
 // world seed: stable per world slot so restarts continue the same world
-const seedA = 0x5eed; // placeholder until M-1B persistence seeds it
+const seedA = 0x5eed;
 const seedB = 0xbadd;
-const host = new Host(`world_${config.worldSlot}`, seedA, seedB, config.maxPlayers);
+const host = new Host(`dustfall:${config.worldSlot}`, `world_${config.worldSlot}`, seedA, seedB, config.maxPlayers);
 
 const http = createServer((req, res) => {
   if (req.url === "/health") {
@@ -29,32 +39,20 @@ const http = createServer((req, res) => {
 const wss = new WebSocketServer({ server: http, maxPayload: 16 * 1024 });
 
 const sessionIdBySocket = new Map<WebSocket, string>();
-let nextSession = 1;
 
 wss.on("connection", (ws) => {
-  const sessionId = `s_${nextSession++}`;
-  const session: Session = {
-    id: sessionId,
-    playerId: `p_${sessionId}`,
-    state: "connecting",
-    ackInputSequence: 0,
-    pending: [],
-    joinedAtTick: 0,
-    queuedBytes: 0,
-    backpressureSince: null,
-  };
-  host.sessions.add(session);
-  sessionIdBySocket.set(ws, sessionId);
-
-  // handshake: JSON hello carries the session id so envelopes can reference it
-  ws.send(JSON.stringify({ protocol: 1, sessionId, serverTick: host.world.clock.tick, worldId: host.world.worldId }));
-  session.state = "awaiting_baseline";
+  const { sessionId, nonce } = host.beginHandshake();
   host.attachWriter(sessionId, (data, isBinary) => {
     if (ws.readyState === WebSocket.OPEN) ws.send(data, { binary: isBinary });
   });
-  host.spawnPlayer(sessionId, session.playerId);
+  sessionIdBySocket.set(ws, sessionId);
+
+  // challenge (GDD §22.4): the client signs this nonce with its P-256 key
+  ws.send(JSON.stringify({ protocol: 1, kind: "challenge", sessionId, nonce, serverTick: host.world.clock.tick, worldId: host.world.worldId }));
 
   ws.on("message", (data: RawData) => {
+    const sessionId = sessionIdBySocket.get(ws);
+    if (!sessionId) return;
     let buf: Buffer;
     if (Buffer.isBuffer(data)) buf = data;
     else if (Array.isArray(data)) buf = Buffer.concat(data);
@@ -66,6 +64,32 @@ wss.on("connection", (ws) => {
       ws.close(4000, "invalid_frame");
       return;
     }
+    const msg = parsed as { kind?: unknown } | null;
+    if (typeof msg === "object" && msg !== null && typeof msg.kind === "string") {
+      if (msg.kind === "identity") {
+        const r = host.submitIdentity(sessionId, msg);
+        if (!r.ok) {
+          console.warn(`[server] identity rejected for ${sessionId}: ${r.reason}`);
+          if (r.reason === "bad_signature" || r.reason === "invalid_jwk") {
+            ws.close(4001, "identity_rejected");
+            return;
+          }
+        }
+        return;
+      }
+      if (msg.kind === "baseline_ack") {
+        const r = host.ackBaseline(sessionId, msg);
+        if (!r.ok) console.warn(`[server] baseline ack rejected for ${sessionId}: ${r.reason}`);
+        return;
+      }
+      if (msg.kind === "hello") {
+        // late re-hello after a challenge the client missed; re-send it
+        const s = host.sessions.get(sessionId);
+        if (s?.nonce) ws.send(JSON.stringify({ protocol: 1, kind: "challenge", sessionId, nonce: s.nonce }));
+        return;
+      }
+    }
+    // gameplay envelope
     const result = host.receiveEnvelope(sessionId, parsed);
     if (!result.ok && (result.reason === "invalid_envelope" || result.reason === "session_mismatch")) {
       // GDD §22.6: invalid frames disconnect after 5 within 60 s
@@ -74,9 +98,13 @@ wss.on("connection", (ws) => {
   });
 
   const cleanup = (): void => {
-    host.detachWriter(sessionId);
-    host.sessions.remove(sessionId);
+    const sessionId = sessionIdBySocket.get(ws);
     sessionIdBySocket.delete(ws);
+    if (!sessionId) return;
+    // keep the session record for the 5-minute reconnect window; the player
+    // body stays in the world (Sleeper policy, §22.5)
+    host.detachWriter(sessionId);
+    host.onDisconnect(sessionId);
   };
   ws.on("close", cleanup);
   ws.on("error", cleanup);
@@ -99,11 +127,29 @@ setInterval(() => {
   if (ticks === 5) acc = 0; // drop the backlog, record overrun
 }, TICK_MS);
 
+// handshake timeout (GDD §22.6: 10 s) + stale disconnected session sweep
+const staleBySocket = new Map<WebSocket, string>();
+setInterval(() => {
+  const now = Date.now();
+  for (const s of host.sessions.all()) {
+    if (s.state === "awaiting_identity" && now - s.connectedAtMs > HANDSHAKE_TIMEOUT_MS) {
+      host.removeSession(s.id);
+      for (const [ws, id] of sessionIdBySocket) {
+        if (id === s.id && ws.readyState === WebSocket.OPEN) {
+          ws.close(4002, "handshake_timeout");
+          sessionIdBySocket.delete(ws);
+        }
+      }
+    }
+  }
+  void staleBySocket;
+}, 2000);
+
 const shutdown = (): void => {
   console.log("[server] shutting down gracefully");
   wss.close();
   http.close();
-  // M-1B: commit last tick + WAL checkpoint here
+  // M2: commit last tick + WAL checkpoint + save via WorldRepository here
   process.exit(0);
 };
 process.on("SIGINT", shutdown);

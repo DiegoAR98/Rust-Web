@@ -21,7 +21,7 @@
  */
 import type { EntityStore, PlayerEntity, CorpseEntity } from "./entities.js";
 import type { World } from "./world.js";
-import type { ItemStack, ItemStack as Stack } from "@dustfall/contracts";
+import type { ItemStack as Stack } from "@dustfall/contracts";
 
 export interface DeathTransaction {
   playerId: string;
@@ -107,8 +107,8 @@ export const commitDeath = (
  * contents are untouched - loss creates the recovery objective.
  */
 export const respawnPlayer = (
-  world: World,
-  store: EntityStore,
+  _world: World,
+  _store: EntityStore,
   p: PlayerEntity,
   spawn: { x: number; y: number; z: number },
 ): void => {

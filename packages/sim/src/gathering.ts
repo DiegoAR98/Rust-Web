@@ -53,7 +53,7 @@ export const resolveSwing = (
   p: PlayerEntity,
   nodeEntityId: string,
 ): SwingResult => {
-  const fail = (reason: SwingResult["reason"]): SwingResult => ({ ok: false, reason, payout: 0, secondaries: [], depleted: false });
+  const fail = (reason: NonNullable<SwingResult["reason"]>): SwingResult => ({ ok: false, reason, payout: 0, secondaries: [], depleted: false });
 
   if (p.dead) return fail("dead");
   const cooldown = TUNING["gather.swing_cooldown_ticks"] as number;
@@ -129,8 +129,8 @@ const jitterMs = (world: World, node: WorldEntity): number => {
 
 /** Heuristic room check for a primary payout plus its expected secondaries
  *  before committing the swing (keeps the swing atomic w.r.t. inventory). */
-const secondariesCount = (def: { secondaries?: { itemId: string; probability: number }[] }): number =>
-  (def.secondaries?.length ?? 0);
+const secondariesCount = (def: { secondaries?: { itemId: string; probability: number }[] | undefined }): number =>
+  def.secondaries?.length ?? 0;
 
 const canCarry = (p: PlayerEntity, itemId: ItemId, amount: number, expectedSecondaries: number): boolean => {
   // primary must fit; secondaries are probabilistic - a swing that cannot

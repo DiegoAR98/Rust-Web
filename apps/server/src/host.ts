@@ -2,16 +2,32 @@
  * Authoritative host (GDD §21.4/§21.5/§21.7).
  * - 30 Hz simulation tick, at most 5 catch-up ticks per frame
  * - 15 Hz replica batches (every second tick)
- * - binary frames after the handshake, msgpack-encoded snapshots
+ * - M2: ECDSA P-256 identity handshake (§22.4), M2 baseline with node /
+ *   corpse / ground records, M2 intents through the tick loop, authoritative
+ *   events forwarded with the following batch (§21.7: never dropped).
  */
-import { createWorld, runTick, type World, type TickCommand } from "@dustfall/sim";
-import { EntityStore, newPlayer, type PlayerEntity } from "@dustfall/sim";
+import { randomBytes } from "node:crypto";
+import { createWorld, runTick, placeWorldNodes, type World, type TickCommand, type TickEvents } from "@dustfall/sim";
+import { EntityStore, newPlayer, type PlayerEntity, type WorldEntity, type CorpseEntity, type GroundItemEntity } from "@dustfall/sim";
 import type { PlayerId, ItemId, EntityId } from "@dustfall/contracts";
-import { ClientEnvelopeSchema, type SnapshotProto } from "@dustfall/protocol";
+import {
+  ClientEnvelopeSchema,
+  BaselineAckSchema,
+  type SnapshotProto,
+} from "@dustfall/protocol";
 import { encode } from "@msgpack/msgpack";
 import { BACKPRESSURE_QUEUE_BYTES, BACKPRESSURE_WINDOW_S } from "@dustfall/protocol";
 import { REGIONS } from "@dustfall/content";
+import { freshVitals } from "@dustfall/contracts";
 import { SessionRegistry } from "./session.js";
+import { derivePlayerId, freshNonce, verifyProof, issueSessionToken } from "./identity.js";
+
+/** per-batch snapshot of node state, for delta computation */
+interface NodeSnapshot {
+  pool: number;
+  accumulator: number;
+  respawnAtTick: number;
+}
 
 export class Host {
   readonly world: World;
@@ -20,12 +36,25 @@ export class Host {
   private batchSequence = 0;
   private baselineId = 1;
   /** socket writers keyed by session id */
-  private readonly writers = new Map<string, (data: Buffer, isBinary: boolean) => void>();
+  private readonly writers = new Map<string, (data: Buffer, isBinary: boolean) => void>;
+  /** HMAC secret for session tokens (per host boot, in memory only) */
+  private readonly sessionSecret: Buffer = randomBytes(32);
+  /** session id -> issued token (revocable, in memory) */
+  private readonly issuedTokens = new Map<string, string>();
+  /** entity id -> last-sent node payload */
+  private readonly nodeSeen = new Map<string, NodeSnapshot>();
+  /** entities sent to at least one ready session (new ones need a spawn record) */
+  private readonly globalSent = new Set<string>();
+  /** events awaiting forwarding (batches only fire on odd ticks; no tick's events may be dropped, §21.7) */
+  private pendingEvents: TickEvents[] = [];
+  /** sessions that have a live player entity */
+  private readonly spawnedSessions = new Set<string>();
 
-  constructor(worldId: string, seedA: number, seedB: number, maxPlayers: number) {
+  constructor(private readonly serverId: string, worldId: string, seedA: number, seedB: number, maxPlayers: number) {
     this.world = createWorld(worldId, seedA, seedB);
     this.store = new EntityStore();
     this.sessions = new SessionRegistry();
+    placeWorldNodes(this.world, this.store);
     void maxPlayers;
   }
 
@@ -38,9 +67,129 @@ export class Host {
     this.writers.delete(sessionId);
   }
 
+  // ------------------------------------------------------------------
+  // identity handshake (GDD §22.4)
+  // ------------------------------------------------------------------
+
   /**
-   * Receive an envelope from a session. Validates and queues for the next tick.
-   * Returns true if accepted.
+   * Open a session and issue the challenge. The session stays in
+   * `awaiting_identity` until a valid proof arrives; gameplay input before
+   * Ready is rejected.
+   */
+  beginHandshake(): { sessionId: string; nonce: string } {
+    const sessionId = `s_${Date.now().toString(36)}_${Math.floor(Math.random() * 1e6).toString(36)}`;
+    const nonce = freshNonce();
+    this.sessions.add({
+      id: sessionId,
+      playerId: "pending",
+      state: "awaiting_identity",
+      nonce,
+      ackInputSequence: 0,
+      pending: [],
+      joinedAtTick: 0,
+      queuedBytes: 0,
+      backpressureSince: null,
+      connectedAtMs: Date.now(),
+      seen: new Set<string>(),
+      baselineId: 0,
+    });
+    return { sessionId, nonce };
+  }
+
+  /**
+   * Verify the identity proof and, on success, enter awaiting_baseline and
+   * send the session grant + baseline. A reconnect within 5 minutes reuses
+   * the player's previous session (same session id, sequence continues);
+   * otherwise a fresh session is issued for the same PlayerId.
+   */
+  submitIdentity(sessionId: string, raw: unknown): { ok: true; grant: import("@dustfall/protocol").SessionGrantProto } | { ok: false; reason: string } {
+    const session = this.sessions.get(sessionId);
+    if (!session) return { ok: false, reason: "unknown_session" };
+    if (session.state !== "awaiting_identity") return { ok: false, reason: "wrong_state" };
+    const proof = typeof raw === "object" && raw !== null ? (raw as { publicKey?: unknown; signature?: unknown; nonce?: unknown; sessionId?: unknown }) : null;
+    if (!proof || typeof proof.signature !== "string") return { ok: false, reason: "malformed_proof" };
+
+    const JwkSchema = { parse: (v: unknown) => this.parseJwk(v) };
+    const jwk = JwkSchema.parse((proof as { publicKey?: unknown }).publicKey);
+    if (!jwk) return { ok: false, reason: "invalid_jwk" };
+    const nonce = session.nonce;
+    if (!nonce) return { ok: false, reason: "no_challenge" };
+    if (!verifyProof(jwk, nonce, proof.signature)) return { ok: false, reason: "bad_signature" };
+
+    const playerId = derivePlayerId(this.serverId, jwk);
+    session.jwk = jwk;
+
+    // duplicate identity: the newer session invalidates the older socket
+    // (GDD 22.4). Stale records are dropped; a recently disconnected one
+    // simply means the player entity is still alive in the world.
+    const incumbent = this.sessions.sessionForPlayer(playerId);
+    if (incumbent && incumbent.id !== sessionId) {
+      this.invalidateSession(incumbent.id);
+      this.removeSession(incumbent.id);
+    }
+    session.playerId = playerId;
+    this.sessions.remove(sessionId); // drop the "pending" key
+    this.sessions.add(session);
+
+    // player entity: keep it (reconnect resumes the same body), spawn it if
+    // it does not exist yet, respawn it if it died while away
+    const existing = [...this.store.values()].find((e) => e.kind === "player" && e.playerId === playerId) as PlayerEntity | undefined;
+    if (!existing) {
+      this.spawnPlayerEntity(playerId);
+    } else if (existing.dead) {
+      // respawn after death while (re)connecting
+      this.respawnEntity(existing);
+    }
+
+    const expiresAt = Date.now() + 24 * 60 * 60 * 1000;
+    const token = issueSessionToken(this.serverId, playerId, sessionId, this.sessionSecret.toString("hex"));
+    this.issuedTokens.set(sessionId, token);
+    session.state = "awaiting_baseline";
+
+    const grant: import("@dustfall/protocol").SessionGrantProto = {
+      protocol: 1,
+      sessionId,
+      playerId,
+      expiresAt,
+      token,
+      hasSavedPlayer: Boolean(existing),
+    };
+    this.sendJson(sessionId, { kind: "session_grant", ...grant });
+    this.sendBaseline(sessionId);
+    return { ok: true, grant };
+  }
+
+  /** Invalidate (kick) a session: stop its input, keep its world state. */
+  invalidateSession(sessionId: string): void {
+    const s = this.sessions.get(sessionId);
+    if (!s) return;
+    s.lastDisconnectAtMs = Date.now();
+    s.state = "connecting"; // no more input
+    this.writers.get(sessionId)?.(Buffer.from(JSON.stringify({ protocol: 1, kind: "kicked", reason: "superseded" })), false);
+  }
+
+  /** Acknowledge the baseline -> Ready. */
+  ackBaseline(sessionId: string, raw: unknown): { ok: true } | { ok: false; reason: string } {
+    const session = this.sessions.get(sessionId);
+    if (!session) return { ok: false, reason: "unknown_session" };
+    if (session.state !== "awaiting_baseline") return { ok: false, reason: "wrong_state" };
+    const parsed = BaselineAckSchema.safeParse(raw);
+    if (!parsed.success) return { ok: false, reason: "invalid_ack" };
+    if (parsed.data.baselineId !== session.baselineId) return { ok: false, reason: "stale_baseline" };
+    session.state = "ready";
+    session.joinedAtTick = this.world.clock.tick;
+    session.readyAtMs = Date.now();
+    this.spawnedSessions.add(sessionId);
+    return { ok: true };
+  }
+
+  // ------------------------------------------------------------------
+  // gameplay
+  // ------------------------------------------------------------------
+
+  /**
+   * Receive a gameplay envelope from a session. Validates and queues for
+   * the next tick. Returns true if accepted.
    */
   receiveEnvelope(sessionId: string, raw: unknown): { ok: true } | { ok: false; reason: string } {
     const session = this.sessions.get(sessionId);
@@ -63,10 +212,11 @@ export class Host {
     const commands: TickCommand[] = [];
     for (const session of this.sessions.all()) {
       if (session.state !== "ready") continue;
+      const p = this.playerFor(session);
       for (const env of session.pending) {
         for (const cmd of env.commands) {
           if (cmd.kind !== "move") continue;
-          commands.push({
+          const intent: TickCommand = {
             playerId: session.playerId,
             sequence: env.sequence,
             intent: {
@@ -79,35 +229,46 @@ export class Host {
             },
             yawHundredths: cmd.yawHundredths,
             pitchHundredths: cmd.pitchHundredths,
-          });
+          };
+          // M2 intents (server treats them as input only, §21.4)
+          if (cmd.swing) intent.swing = cmd.swing;
+          if (cmd.pickup) intent.pickup = cmd.pickup;
+          if (cmd.drop) intent.drop = cmd.drop;
+          if (cmd.moveItem) {
+            const mi: TickCommand["moveItem"] = { from: cmd.moveItem.from, to: cmd.moveItem.to };
+            if (cmd.moveItem.equip) mi.equip = cmd.moveItem.equip;
+            intent.moveItem = mi;
+          }
+          if (cmd.heldSlot !== undefined && p) {
+            intent.heldItemId = p.inventory[cmd.heldSlot]?.itemId ?? null;
+          }
+          commands.push(intent);
         }
       }
       session.pending.length = 0;
     }
 
-    runTick(this.world, this.store, commands);
+    this.pendingEvents.push(runTick(this.world, this.store, commands));
 
     const batchDue = this.world.clock.tick % 2 === 1;
-    if (batchDue) {
-      this.emitReplicaBatch();
-    }
+    if (batchDue) this.emitReplicaBatch();
     return batchDue;
   }
 
+  private playerFor(session: import("./session.js").Session): PlayerEntity | undefined {
+    for (const e of this.store.values()) {
+      if (e.kind === "player" && e.playerId === session.playerId) return e as PlayerEntity;
+    }
+    return undefined;
+  }
+
   private emitReplicaBatch(): void {
-    const snapshot: SnapshotProto = {
-      protocol: 1,
-      serverTick: this.world.clock.tick,
-      batchSequence: this.batchSequence,
-      ackInputSequence: 0,
-      baselineId: this.baselineId,
-      records: [],
-    };
+    const records: SnapshotProto["records"] = [];
     for (const e of this.store.values()) {
       if (e.kind === "player") {
         const p = e as PlayerEntity;
         if (!p.dead) {
-          snapshot.records.push({
+          records.push({
             kind: "delta",
             entityId: p.id,
             position: { x: Math.round(p.position.x), y: Math.round(p.position.y), z: Math.round(p.position.z) },
@@ -118,22 +279,180 @@ export class Host {
             posture: p.posture,
           });
         }
+      } else if (e.kind === "world") {
+        const w = e as WorldEntity;
+        const seen = this.nodeSeen.get(e.id);
+        if (!seen || seen.pool !== w.pool || seen.accumulator !== w.accumulator || seen.respawnAtTick !== w.respawnAtTick) {
+          records.push({
+            kind: "delta",
+            entityId: e.id,
+            pool: w.pool,
+            accumulator: w.accumulator,
+            respawnAtTick: w.respawnAtTick,
+          });
+        }
+        this.nodeSeen.set(e.id, { pool: w.pool, accumulator: w.accumulator, respawnAtTick: w.respawnAtTick });
+      } else if (e.kind === "corpse") {
+        const c = e as CorpseEntity;
+        if (!this.globalSent.has(e.id)) {
+          records.push({
+            kind: "spawn",
+            entityId: e.id,
+            kindTag: "corpse",
+            position: { x: c.position.x, y: c.position.y, z: c.position.z },
+            inventory: c.inventory,
+          });
+        } else {
+          records.push({
+            kind: "delta",
+            entityId: e.id,
+            position: { x: c.position.x, y: c.position.y, z: c.position.z },
+          });
+        }
+      } else if (e.kind === "ground_item") {
+        const g = e as GroundItemEntity;
+        if (!this.globalSent.has(e.id)) {
+          records.push({
+            kind: "spawn",
+            entityId: e.id,
+            kindTag: "ground_item",
+            position: { x: g.position.x, y: g.position.y, z: g.position.z },
+            stack: g.stack,
+            despawnAtTick: g.despawnAtTick,
+          });
+        } else {
+          records.push({
+            kind: "delta",
+            entityId: e.id,
+            stack: g.stack,
+          });
+        }
+      }
+      this.globalSent.add(e.id);
+    }
+
+    // authoritative events since the last batch (§21.7: never dropped)
+    const evs = this.pendingEvents;
+    this.pendingEvents = [];
+    for (const ev of evs) {
+      for (const g of ev.gathered) {
+        records.push({ kind: "event", entityId: g.nodeEntityId, event: "gather", payload: { playerId: g.playerId, payout: g.payout, secondaries: g.secondaries, depleted: g.depleted } });
+      }
+      for (const d of ev.deaths) {
+        records.push({ kind: "event", event: "death", payload: { playerId: d.playerId, corpseEntityId: d.corpseEntityId, tick: d.tick } });
+      }
+      for (const inv of ev.inventory) {
+        records.push({ kind: "event", event: "inventory", payload: { playerId: inv.playerId, kind: inv.kind, ok: inv.ok, touched: inv.touched, taken: inv.taken ?? [] } });
+      }
+      for (const nid of ev.respawnedNodes) {
+        records.push({ kind: "event", entityId: nid, event: "node_respawn", payload: {} });
+      }
+      for (const gid of ev.despawnedGround) {
+        records.push({ kind: "event", event: "ground_despawn", payload: { entityId: gid } });
+        records.push({ kind: "forget", entityId: gid });
       }
     }
+
+    const snapshot: SnapshotProto = {
+      protocol: 1,
+      serverTick: this.world.clock.tick,
+      batchSequence: this.batchSequence,
+      ackInputSequence: 0,
+      baselineId: this.baselineId,
+      records,
+    };
     this.batchSequence += 1;
     const payload = encode(snapshot);
     for (const [sessionId, writer] of this.writers) {
       const s = this.sessions.get(sessionId);
       if (!s || s.state !== "ready") continue;
-      // backpressure check (GDD §21.7): 4 MiB queued for 10 s -> disconnect
       s.queuedBytes += payload.byteLength;
       writer(Buffer.from(payload), true);
-      // NOTE: queuedBytes is decremented by the socket layer when drained
     }
   }
 
-  /** Spawn a player at the first spawn point of Bootheel Landing. */
-  spawnPlayer(sessionId: string, playerId: string): EntityId {
+  // ------------------------------------------------------------------
+  // baseline + spawning
+  // ------------------------------------------------------------------
+
+  /** Full world baseline for the session (GDD §21.7: full on join, then deltas). */
+  private sendBaseline(sessionId: string): void {
+    const session = this.sessions.get(sessionId);
+    if (!session) return;
+    const seen = session.seen;
+    const records: SnapshotProto["records"] = [];
+    for (const e of this.store.values()) {
+      seen.add(e.id);
+      if (e.kind === "player") {
+        const p = e as PlayerEntity;
+        if (p.dead && p.playerId === session.playerId) continue; // dead self: death overlay, no body
+        const isSelf = p.playerId === session.playerId;
+        const rec: SnapshotProto["records"][number] = {
+          kind: "spawn",
+          entityId: p.id,
+          kindTag: "player",
+          position: { x: Math.round(p.position.x), y: Math.round(p.position.y), z: Math.round(p.position.z) },
+        };
+        // msgpack encodes undefined as null: only set keys that are present
+        if (isSelf) {
+          rec.health = Math.round(p.vitals.health);
+          rec.inventory = p.inventory;
+        }
+        records.push(rec);
+      } else if (e.kind === "world") {
+        const w = e as WorldEntity;
+        records.push({
+          kind: "spawn",
+          entityId: e.id,
+          kindTag: "world",
+          position: { x: w.position.x, y: w.position.y, z: w.position.z },
+          contentId: w.contentId,
+          pool: w.pool,
+          accumulator: w.accumulator,
+          respawnAtTick: w.respawnAtTick,
+        });
+        this.nodeSeen.set(e.id, { pool: w.pool, accumulator: w.accumulator, respawnAtTick: w.respawnAtTick });
+      } else if (e.kind === "corpse") {
+        const c = e as CorpseEntity;
+        records.push({
+          kind: "spawn",
+          entityId: e.id,
+          kindTag: "corpse",
+          position: { x: c.position.x, y: c.position.y, z: c.position.z },
+          inventory: c.inventory,
+        });
+      } else if (e.kind === "ground_item") {
+        const g = e as GroundItemEntity;
+        records.push({
+          kind: "spawn",
+          entityId: e.id,
+          kindTag: "ground_item",
+          position: { x: g.position.x, y: g.position.y, z: g.position.z },
+          stack: g.stack,
+          despawnAtTick: g.despawnAtTick,
+        });
+      }
+    }
+    const snapshot: SnapshotProto = {
+      protocol: 1,
+      serverTick: this.world.clock.tick,
+      batchSequence: this.batchSequence,
+      ackInputSequence: 0,
+      baselineId: this.baselineId,
+      records,
+    };
+    session.baselineId = this.baselineId;
+    this.batchSequence += 1;
+    for (const e of this.store.values()) this.globalSent.add(e.id);
+    const writer = this.writers.get(sessionId);
+    if (writer) writer(Buffer.from(encode(snapshot)), true);
+  }
+
+  /**
+   * Spawn the player entity at the first spawn point of Bootheel Landing.
+   * Starter kit: Rock, Torch, two Bandages (GDD §3).
+   */
+  private spawnPlayerEntity(playerId: string): EntityId {
     const region = REGIONS.find((r) => r.id === "region_bootheel_landing");
     const spawnPoint = region?.spawnPoints[0] ?? { x: 0, y: 0, z: 0 };
     const id = this.store.allocate();
@@ -143,49 +462,54 @@ export class Host {
       z: Math.round(spawnPoint.z * 100),
     });
     this.store.insert(p);
-
-    // starter kit: Rock, Torch, two Bandages (GDD §3)
     p.inventory[0] = { itemId: "rock" as ItemId, quantity: 1 };
     p.inventory[1] = { itemId: "torch" as ItemId, quantity: 1 };
     p.inventory[2] = { itemId: "bandage" as ItemId, quantity: 2 };
-    // hotbar mirrors slots
     p.inventory[28] = { itemId: "rock" as ItemId, quantity: 1 };
     p.inventory[29] = { itemId: "torch" as ItemId, quantity: 1 };
-
-    const session = this.sessions.get(sessionId);
-    if (session) {
-      session.state = "ready";
-      session.joinedAtTick = this.world.clock.tick;
-      // baseline: spawn record for every live entity, so late joiners
-      // see the whole world (GDD §21.7: full baseline on join, then deltas)
-      const records: SnapshotProto["records"] = [];
-      for (const e of this.store.values()) {
-        if (e.kind !== "player" || (e as PlayerEntity).dead) continue;
-        const p = e as PlayerEntity;
-        records.push({
-          kind: "spawn",
-          entityId: p.id,
-          kindTag: "player",
-          position: {
-            x: Math.round(p.position.x),
-            y: Math.round(p.position.y),
-            z: Math.round(p.position.z),
-          },
-        });
-      }
-      const snapshot: SnapshotProto = {
-        protocol: 1,
-        serverTick: this.world.clock.tick,
-        batchSequence: this.batchSequence,
-        ackInputSequence: 0,
-        baselineId: this.baselineId,
-        records,
-      };
-      this.batchSequence += 1;
-      const writer = this.writers.get(sessionId);
-      if (writer) writer(Buffer.from(encode(snapshot)), true);
-    }
+    p.heldItemId = p.inventory[0]?.itemId ?? null;
     return id;
+  }
+
+  /** Respawn a dead player entity at spawn with the starter kit. */
+  private respawnEntity(p: PlayerEntity): void {
+    const region = REGIONS.find((r) => r.id === "region_bootheel_landing");
+    const spawnPoint = region?.spawnPoints[0] ?? { x: 0, y: 0, z: 0 };
+    p.position = { x: Math.round(spawnPoint.x * 100), y: 0, z: Math.round(spawnPoint.z * 100) };
+    p.prevPosition = { ...p.position };
+    p.velocityY = 0;
+    p.dead = false;
+    p.deadTicks = 0;
+    p.yawHundredths = 0;
+    p.pitchHundredths = 0;
+    p.posture = "standing";
+    p.vitals = freshVitals();
+    p.inventory = new Array(36).fill(null);
+    p.inventory[0] = { itemId: "rock" as ItemId, quantity: 1 };
+    p.inventory[1] = { itemId: "torch" as ItemId, quantity: 1 };
+    p.inventory[2] = { itemId: "bandage" as ItemId, quantity: 2 };
+    p.inventory[28] = { itemId: "rock" as ItemId, quantity: 1 };
+    p.inventory[29] = { itemId: "torch" as ItemId, quantity: 1 };
+    p.heldItemId = p.inventory[0]?.itemId ?? null;
+  }
+
+  /**
+   * Gateway hook: a socket closed. Marks the session disconnected so a
+   * reconnect within 5 minutes can resume it (GDD §22.4). The player
+   * entity stays in the world (Sleeper policy, §22.5).
+   */
+  onDisconnect(sessionId: string): void {
+    const s = this.sessions.get(sessionId);
+    if (!s) return;
+    s.lastDisconnectAtMs = Date.now();
+    this.issuedTokens.delete(sessionId);
+  }
+
+  /** Gateway hook: a session was fully removed (duplicate identity / kick). */
+  removeSession(sessionId: string): void {
+    this.sessions.remove(sessionId);
+    this.issuedTokens.delete(sessionId);
+    this.writers.delete(sessionId);
   }
 
   get maxBackpressureBytes(): number {
@@ -194,5 +518,25 @@ export class Host {
 
   get backpressureWindowMs(): number {
     return BACKPRESSURE_WINDOW_S * 1000;
+  }
+
+  // ------------------------------------------------------------------
+  // wire helpers
+  // ------------------------------------------------------------------
+
+  private sendJson(sessionId: string, obj: unknown): void {
+    const writer = this.writers.get(sessionId);
+    if (writer) writer(Buffer.from(JSON.stringify(obj)), false);
+  }
+
+  private parseJwk(v: unknown): import("@dustfall/protocol").JwkProto | null {
+    if (typeof v !== "object" || v === null) return null;
+    const o = v as Record<string, unknown>;
+    if (o.kty !== "EC" || o.crv !== "P-256") return null;
+    if (typeof o.x !== "string" || typeof o.y !== "string") return null;
+    if (o.x.length < 43 || o.x.length > 44 || o.y.length < 43 || o.y.length > 44) return null;
+    const jwk: import("@dustfall/protocol").JwkProto = { kty: "EC", crv: "P-256", x: o.x, y: o.y };
+    if (o.alg === "ES256") jwk.alg = "ES256";
+    return jwk;
   }
 }

@@ -25,6 +25,8 @@ export const SpawnRecordSchema = z.object({
   despawnAtTick: z.number().int().optional(),
   /** M2: corpse contents (stable slot order) */
   inventory: z.array(ItemStackSchema.nullable()).max(40).optional(),
+  /** M2: the joining player's own record carries live vitals + grid */
+  health: z.number().int().min(0).max(100).optional(),
 });
 
 export const DeltaRecordSchema = z.object({
@@ -85,7 +87,7 @@ export const SnapshotSchema = z.object({
   batchSequence: z.number().int().nonnegative(),
   ackInputSequence: z.number().int().nonnegative(),
   baselineId: z.number().int().nonnegative(),
-  records: z.array(ReplicaRecordSchema).max(200),
+  records: z.array(ReplicaRecordSchema).max(400),
 });
 export type SnapshotProto = z.infer<typeof SnapshotSchema>;
 
