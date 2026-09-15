@@ -659,6 +659,7 @@ export class Host {
         position: { ...p.position },
         vitals: p.vitals,
         lastSeenTick: c.tick,
+        craft: p.craft ? { recipeId: p.craft.recipeId, completesAtTick: p.craft.completesAtTick } : null,
       });
     }
     const entities: import("@dustfall/persistence").EntitySave[] = [];
@@ -701,7 +702,9 @@ export class Host {
           contentId: st.contentId,
           position: { ...st.position },
           pool: 0,
-          payload: { ownerId: st.ownerId, hp: st.hp, maxHp: st.maxHp },
+          payload: st.craft
+            ? { ownerId: st.ownerId, hp: st.hp, maxHp: st.maxHp, craft: { ...st.craft } }
+            : { ownerId: st.ownerId, hp: st.hp, maxHp: st.maxHp },
         });
       }
     }
@@ -785,7 +788,9 @@ export class Host {
           contentId: es.contentId,
           position,
           ownerId: es.payload?.ownerId ?? "",
-          craft: null, // in-flight station craft does not survive a restart
+          craft: es.payload?.craft
+            ? { recipeId: es.payload.craft.recipeId, completesAtTick: es.payload.craft.completesAtTick, startedBy: es.payload.craft.startedBy }
+            : null,
           hp: es.payload?.hp ?? 100,
           maxHp: es.payload?.maxHp ?? 100,
         };
@@ -804,6 +809,7 @@ export class Host {
         live.blueprints = [...ps.blueprints];
         live.equipment = ps.equipment;
         live.inventory = ps.inventory.map((s) => (s ? { ...s } : null));
+        live.craft = ps.craft ? { ...ps.craft } : null;
       } else {
         const id = this.store.allocate();
         const p = newPlayer(id, ps.playerId as PlayerId, { ...ps.position });
@@ -811,6 +817,7 @@ export class Host {
         p.blueprints = [...ps.blueprints];
         p.equipment = ps.equipment;
         p.inventory = ps.inventory.map((s) => (s ? { ...s } : null));
+        p.craft = ps.craft ? { ...ps.craft } : null;
         this.store.insert(p);
         restoredIds.push(p.id);
       }

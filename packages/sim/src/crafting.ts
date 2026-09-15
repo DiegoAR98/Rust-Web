@@ -21,7 +21,7 @@
  */
 import { ITEMS, RECIPES, BLUEPRINTS } from "@dustfall/content";
 import { TUNING } from "@dustfall/content";
-import type { Vec3, ItemId } from "@dustfall/contracts";
+import type { Vec3 } from "@dustfall/contracts";
 import type { EntityStore, PlayerEntity, StructureEntity } from "./entities.js";
 import type { World } from "./world.js";
 import { spawnGroundItem } from "./pickup.js";
@@ -217,7 +217,7 @@ export const advanceCrafts = (
  * default recipes, loot-only items and an already-known payload.
  */
 export const research = (
-  world: World,
+  _world: World,
   store: EntityStore,
   p: PlayerEntity,
   structureEntityId: string,
@@ -264,7 +264,7 @@ export const research = (
  * range, spacing and per-player cap; the client ghost is provisional.
  */
 export const placeStructure = (
-  world: World,
+  _world: World,
   store: EntityStore,
   p: PlayerEntity,
   slot: number,

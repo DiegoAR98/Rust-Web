@@ -19,7 +19,7 @@
  * the region spawn with a fresh starter kit. The corpse and its contents
  * are recoverable (loot) or can be carried by raider AI (M7).
  */
-import type { EntityStore, PlayerEntity, CorpseEntity, StructureEntity } from "./entities.js";
+import type { EntityStore, PlayerEntity, CorpseEntity } from "./entities.js";
 import type { World } from "./world.js";
 import type { ItemStack as Stack } from "@dustfall/contracts";
 

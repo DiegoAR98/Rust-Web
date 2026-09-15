@@ -93,6 +93,14 @@ const MIGRATIONS = [
       ALTER TABLE staging_entities ADD COLUMN payload_json TEXT;
     `,
   },
+  {
+    // M3: in-flight hand-craft state per player (null-safe JSON).
+    id: "0003_m3_player_craft",
+    up: `
+      ALTER TABLE players ADD COLUMN craft_json TEXT;
+      ALTER TABLE staging_players ADD COLUMN craft_json TEXT;
+    `,
+  },
 ];
 
 export class WorldRepository {
@@ -171,7 +179,7 @@ export class WorldRepository {
       this.db.exec("DELETE FROM staging_players; DELETE FROM staging_player_inventory; DELETE FROM staging_entities;");
 
       const sp = this.db.prepare(
-        "INSERT INTO staging_players (player_id, position_json, vitals_json, last_seen_tick, blueprints_json, equipment_json) VALUES (?, ?, ?, ?, ?, ?)",
+        "INSERT INTO staging_players (player_id, position_json, vitals_json, last_seen_tick, blueprints_json, equipment_json, craft_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
       );
       const si = this.db.prepare(
         "INSERT INTO staging_player_inventory (player_id, slot, item_id, quantity, payload) VALUES (?, ?, ?, ?, ?)",
@@ -181,7 +189,7 @@ export class WorldRepository {
       );
 
       for (const p of doc.players) {
-        sp.run(p.playerId, JSON.stringify(p.position), JSON.stringify(p.vitals), p.lastSeenTick, JSON.stringify(p.blueprints), JSON.stringify(p.equipment));
+        sp.run(p.playerId, JSON.stringify(p.position), JSON.stringify(p.vitals), p.lastSeenTick, JSON.stringify(p.blueprints), JSON.stringify(p.equipment), p.craft ? JSON.stringify(p.craft) : null);
         for (let slot = 0; slot < p.inventory.length; slot++) {
           const stack = p.inventory[slot];
           if (stack) si.run(p.playerId, slot, stack.itemId, stack.quantity, stack.payload ?? null);
@@ -241,7 +249,7 @@ export class WorldRepository {
 
     const players = this.db
       .prepare(
-        `SELECT p.player_id, p.position_json, p.vitals_json, p.last_seen_tick, p.blueprints_json, p.equipment_json,
+        `SELECT p.player_id, p.position_json, p.vitals_json, p.last_seen_tick, p.blueprints_json, p.equipment_json, p.craft_json,
                 (SELECT json_group_array(json_object('slot', slot, 'itemId', item_id, 'quantity', quantity, 'payload', payload))
                  FROM player_inventory
                  WHERE player_id = p.player_id
@@ -257,6 +265,7 @@ export class WorldRepository {
           lastSeenTick: Number(r["last_seen_tick"]),
           blueprints: JSON.parse(String(r["blueprints_json"])),
           equipment: JSON.parse(String(r["equipment_json"])),
+          craft: r["craft_json"] != null ? (JSON.parse(String(r["craft_json"])) as { recipeId: string; completesAtTick: number }) : null,
           inventory: Array.from({ length: 36 }, () => null),
         };
         const stacks: Array<{ slot: number; itemId: string; quantity: number; payload: string | null }> = JSON.parse(String(r["stacks"] ?? "[]"));

@@ -13,7 +13,7 @@
 import type { EntityStore, PlayerEntity, GroundItemEntity, CorpseEntity } from "./entities.js";
 import type { World } from "./world.js";
 import { TUNING, ITEMS } from "@dustfall/content";
-import type { ItemId, ItemStack } from "@dustfall/contracts";
+import type { ItemId, ItemStack, Vec3 } from "@dustfall/contracts";
 import { addStack, isMergeable, stackMax } from "./inventory.js";
 
 export interface LootResult {

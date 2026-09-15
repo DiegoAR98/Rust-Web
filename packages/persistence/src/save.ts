@@ -15,6 +15,8 @@ export interface PlayerSave {
   position: Vec3;
   vitals: Vitals;
   lastSeenTick: number;
+  /** M3: in-flight hand-craft (null = not crafting) */
+  craft: { recipeId: string; completesAtTick: number } | null;
 }
 
 export interface EntitySave {
@@ -43,6 +45,8 @@ export interface EntitySave {
     ownerId?: string;
     hp?: number;
     maxHp?: number;
+    /** M3: in-flight station craft (survives a restart) */
+    craft?: { recipeId: string; completesAtTick: number; startedBy: string };
   };
 }
 

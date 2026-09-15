@@ -13,10 +13,12 @@ import type { JwkProto } from "@dustfall/protocol";
 import {
   commitDeath,
   dropToGround,
+  placeStructure,
   type PlayerEntity,
   type WorldEntity,
   type CorpseEntity,
   type GroundItemEntity,
+  type StructureEntity,
 } from "@dustfall/sim";
 import { Host } from "../src/host.js";
 
@@ -149,5 +151,53 @@ describe("host <-> WorldRepository round-trip (GDD 21)", () => {
     const pA = [...host2.store.values()].find((e) => e.kind === "player" && e.playerId === a.playerId) as PlayerEntity;
     expect(pA.id).not.toBe(pB.id);
     expect(host2.store.get(pB.id)?.kind).toBe("player");
+  });
+
+  it("restores structures: position, owner, hp and an in-progress station craft", () => {
+    const repo = repoFor();
+    const host = new Host("test_server", "world_persist", 0x1, 0x2, 8);
+    const { playerId } = connectAndReady(host);
+    for (let i = 0; i < 5; i++) host.tick();
+    const p = [...host.store.values()].find((e) => e.kind === "player" && e.playerId === playerId) as PlayerEntity;
+    p.inventory[0] = { itemId: "campfire", quantity: 1 };
+    p.inventory[1] = { itemId: "workbench", quantity: 1 };
+    const pr = placeStructure(host.world, host.store, p, 0, { x: p.position.x, y: 0, z: p.position.z + 200 });
+    expect(pr.ok).toBe(true);
+    const br = placeStructure(host.world, host.store, p, 1, { x: p.position.x, y: 0, z: p.position.z + 400 });
+    expect(br.ok).toBe(true);
+    const fire = host.store.get(pr.structureEntityId!) as StructureEntity;
+    fire.hp = 480; // partially damaged
+    // an active station craft on the workbench, materials already paid
+    const bench = host.store.get(br.structureEntityId!) as StructureEntity;
+    bench.craft = { recipeId: "recipe_campfire", completesAtTick: host.world.clock.tick + 50, startedBy: playerId };
+
+    repo.save(host.toSaveDocument());
+    const host2 = new Host("test_server", "world_persist", 0x1, 0x2, 8);
+    host2.restoreFromSave(repo.load()!);
+
+    const fire2 = host2.store.get(pr.structureEntityId!) as StructureEntity;
+    expect(fire2.contentId).toBe("campfire");
+    expect(fire2.ownerId).toBe(playerId);
+    expect(fire2.hp).toBe(480);
+    expect(fire2.position).toEqual(fire.position);
+    const bench2 = host2.store.get(br.structureEntityId!) as StructureEntity;
+    expect(bench2.craft?.recipeId).toBe("recipe_campfire");
+    expect(bench2.craft?.completesAtTick).toBe(bench.craft?.completesAtTick);
+    expect(bench2.craft?.startedBy).toBe(playerId);
+  });
+
+  it("restores learned blueprints on the player", () => {
+    const repo = repoFor();
+    const host = new Host("test_server", "world_persist", 0x1, 0x2, 8);
+    const { playerId } = connectAndReady(host);
+    for (let i = 0; i < 3; i++) host.tick();
+    const p = [...host.store.values()].find((e) => e.kind === "player" && e.playerId === playerId) as PlayerEntity;
+    p.blueprints.push("bp_pickaxe");
+
+    repo.save(host.toSaveDocument());
+    const host2 = new Host("test_server", "world_persist", 0x1, 0x2, 8);
+    host2.restoreFromSave(repo.load()!);
+    const p2 = [...host2.store.values()].find((e) => e.kind === "player" && e.playerId === playerId) as PlayerEntity;
+    expect(p2.blueprints).toContain("bp_pickaxe");
   });
 });
