@@ -189,6 +189,9 @@ export const runTick = (world: World, store: EntityStore, commands: TickCommand[
       }
       if (cmd.place) {
         const r = placeStructure(world, store, p, cmd.place.slot, cmd.place.position);
+        if (!r.ok && process.env.DUSTFALL_DEBUG) {
+          console.error(`[place:reject] ${p.playerId} slot=${cmd.place.slot} @(${cmd.place.position.x},${cmd.place.position.z}): ${r.reason}`);
+        }
         if (r.ok && r.structureEntityId) {
           const st = store.get(r.structureEntityId);
           if (st && st.kind === "structure") events.placed.push({ playerId: p.playerId, structureEntityId: st.id, contentId: st.contentId });
