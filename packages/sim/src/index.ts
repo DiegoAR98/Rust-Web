@@ -6,6 +6,7 @@ export * from "./vitals-sys.js";
 export * from "./inventory.js";
 export * from "./gathering.js";
 export * from "./death.js";
+export * from "./pickup.js";
 export * from "./worldgen.js";
 export * from "./tick.js";
 export * from "./rng.js";

@@ -28,6 +28,8 @@ import { applyMovement, type MovementIntent } from "./movement.js";
 import { applyVitals } from "./vitals-sys.js";
 import { resolveSwing, applyNodeRespawns, type SwingResult } from "./gathering.js";
 import { commitDeath, type DeathTransaction } from "./death.js";
+import { loot, dropToGround, applyGroundDespawn } from "./pickup.js";
+import { moveSlot, equipFromSlot, unequipSlot, type MoveResult } from "./inventory.js";
 import type { EntityStore, PlayerEntity } from "./entities.js";
 import type { World } from "./world.js";
 
@@ -38,7 +40,10 @@ export interface TickCommand {
   yawHundredths: number;
   pitchHundredths: number;
   /** M2 intents (all optional; a move command may carry one) */
-  swing?: { targetEntityId: string; heldItemId?: string | null };
+  swing?: { targetEntityId: string };
+  pickup?: { sourceEntityId: string };
+  drop?: { slot: number };
+  moveItem?: { from: number; to: number; equip?: "helmet" | "vest" | "pants" | "boots" };
   heldItemId?: string | null;
 }
 
@@ -57,6 +62,16 @@ export interface TickEvents {
   deaths: DeathTransaction[];
   /** node entities that respawned this tick */
   respawnedNodes: string[];
+  /** ground stacks despawned this tick */
+  despawnedGround: string[];
+  /** inventory mutations applied this tick (move/drop/loot/equip) */
+  inventory: Array<{
+    playerId: string;
+    kind: "move" | "drop" | "pickup" | "equip" | "unequip";
+    ok: boolean;
+    touched: number[];
+    taken?: { itemId: string; quantity: number }[];
+  }>;
 }
 
 /**
@@ -69,7 +84,7 @@ export const runTick = (world: World, store: EntityStore, commands: TickCommand[
     return a.sequence - b.sequence;
   });
 
-  const events: TickEvents = { moved: [], died: [], gathered: [], deaths: [], respawnedNodes: [] };
+  const events: TickEvents = { moved: [], died: [], gathered: [], deaths: [], respawnedNodes: [], despawnedGround: [], inventory: [] };
 
   // group by player; the last command is the authoritative movement frame
   const byPlayer = new Map<string, TickCommand[]>();
@@ -86,8 +101,8 @@ export const runTick = (world: World, store: EntityStore, commands: TickCommand[
     if (p.dead) continue;
     const cmds = byPlayer.get(p.playerId);
 
-    // 4. interactions / gathering: every queued swing command this tick
-    //    (a client may queue multiple LMB presses between frames)
+    // 4. interactions / gathering / inventory: every queued command this
+    //    tick (a client may queue multiple LMB presses or drags between frames)
     let last: TickCommand | undefined;
     for (const cmd of cmds ?? []) {
       last = cmd;
@@ -102,6 +117,42 @@ export const runTick = (world: World, store: EntityStore, commands: TickCommand[
             depleted: r.depleted,
           });
         }
+      }
+      if (cmd.pickup) {
+        const r = loot(world, store, p, cmd.pickup.sourceEntityId);
+        events.inventory.push({
+          playerId: p.playerId,
+          kind: "pickup",
+          ok: r.ok,
+          touched: [],
+          taken: r.taken.map((t) => ({ itemId: t.itemId, quantity: t.quantity })),
+        });
+      }
+      if (cmd.drop) {
+        const r = dropToGround(world, store, p, cmd.drop.slot);
+        events.inventory.push({
+          playerId: p.playerId,
+          kind: "drop",
+          ok: r.ok,
+          touched: [cmd.drop.slot],
+        });
+      }
+      if (cmd.moveItem) {
+        let mr: MoveResult;
+        if (cmd.moveItem.to === -1 && cmd.moveItem.equip) {
+          // -1 target with a slot = unequip back to the grid
+          mr = unequipSlot(p.inventory, p.equipment, cmd.moveItem.equip);
+        } else if (cmd.moveItem.equip) {
+          mr = equipFromSlot(p.inventory, p.equipment, cmd.moveItem.equip, cmd.moveItem.from);
+        } else {
+          mr = moveSlot(p.inventory, cmd.moveItem.from, cmd.moveItem.to);
+        }
+        events.inventory.push({
+          playerId: p.playerId,
+          kind: cmd.moveItem.to === -1 ? "unequip" : cmd.moveItem.equip ? "equip" : "move",
+          ok: mr.ok,
+          touched: mr.touched,
+        });
       }
     }
     if (last?.heldItemId !== undefined) p.heldItemId = (last.heldItemId ?? null) as PlayerEntity["heldItemId"];
@@ -132,6 +183,8 @@ export const runTick = (world: World, store: EntityStore, commands: TickCommand[
 
   // 7. node respawn (GDD §7: never within 60 m of a live player)
   events.respawnedNodes.push(...applyNodeRespawns(world, store));
+  // 7. ground stack despawn (GDD §8: catalog timer)
+  events.despawnedGround.push(...applyGroundDespawn(world, store));
 
   // 12. advance tick exactly once
   advanceClock(world);
