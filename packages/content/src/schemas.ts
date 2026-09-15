@@ -122,6 +122,47 @@ export const radiationZoneSchema = z.object({
 });
 export type RadiationZoneDef = z.infer<typeof radiationZoneSchema>;
 
+/** GDD §7: nodes have a resource pool, not hit points. */
+export const nodeIdSchema = z.string().regex(/^node_[a-z0-9_]+$/);
+export const nodeKindSchema = z.enum([
+  "tree",
+  "wood_pile",
+  "stone_rock",
+  "metal_ore",
+  "sulfur_ore",
+  "animal_corpse",
+]);
+
+export const nodeSchema = z.object({
+  id: nodeIdSchema,
+  kind: nodeKindSchema,
+  /** primary resource paid out per whole harvest unit */
+  resourceItemId: itemIdSchema,
+  /** resource units until the node is depleted */
+  pool: z.number().int().positive().max(99),
+  /** authored respawn timer in game seconds; 0 = does not respawn */
+  respawnSeconds: z.number().int().nonnegative(),
+  /** swings with a tool multiplier below this contribute nothing (GDD §7 tool preference) */
+  minToolMultiplier: z.number().positive().max(4),
+  /** extra rolls per paid unit (GDD §7: animal corpse yields cloth/fat/occasional blood) */
+  secondaries: z
+    .array(z.object({ itemId: itemIdSchema, probability: z.number().min(0).max(1) }))
+    .optional(),
+});
+export type NodeDef = z.infer<typeof nodeSchema>;
+
+/** Seeded per-region node placement (world generation input). */
+export const nodePlacementSchema = z.object({
+  nodeId: nodeIdSchema,
+  regionId: regionIdSchema,
+  count: z.number().int().positive().max(500),
+  /** scatter radius around the anchor, meters */
+  scatterM: z.number().positive().max(500),
+  /** anchor at the first spawn point instead of the first tile center */
+  nearSpawn: z.boolean().optional(),
+});
+export type NodePlacementDef = z.infer<typeof nodePlacementSchema>;
+
 export const tuningSchema = z.record(
   z.string().regex(/^[a-z][a-z0-9_.]*$/),
   z.union([z.number().finite(), z.string(), z.boolean()]),

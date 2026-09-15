@@ -7,4 +7,4 @@ if (result.failures.length > 0) {
   console.error(`[content] ${result.failures.length} validation failure(s)`);
   process.exit(1);
 }
-console.log(`[content] OK ${result.itemCount} items, ${result.recipeCount} recipes, ${result.radiationZoneCount} radiation zones, ${result.tuningKeyCount} tuning keys`);
+console.log(`[content] OK ${result.itemCount} items, ${result.recipeCount} recipes, ${result.nodeCount} nodes (${result.nodePlacementCount} placements), ${result.radiationZoneCount} radiation zones, ${result.tuningKeyCount} tuning keys`);
