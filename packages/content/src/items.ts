@@ -60,11 +60,14 @@ export const ITEMS: readonly ItemDef[] = [
   { id: "cloth_boots", category: "armor", stackMax: 1, armor: { slot: "boots", damageReduction: 0.05, warmth: 3, radiationProtection: 0 } },
   // ---- research ----
   { id: "research_kit", category: "misc", stackMax: 5 },
-  // ---- building & deployables (M4 adds full grid rules) ----
-  { id: "wood_shelter", category: "building", stackMax: 1, building: { tier: "wood", maxHp: 500, decayDays: 3, damageImmune: false } },
-  { id: "campfire", category: "deployable", stackMax: 1, building: { tier: "wood", maxHp: 250, decayDays: 3, damageImmune: false } },
-  { id: "furnace", category: "deployable", stackMax: 1, building: { tier: "wood", maxHp: 1000, decayDays: 7, damageImmune: false } },
-  { id: "workbench", category: "deployable", stackMax: 1, building: { tier: "wood", maxHp: 500, decayDays: 7, damageImmune: false } },
-  { id: "wood_storage_box", category: "deployable", stackMax: 1, building: { tier: "wood", maxHp: 500, decayDays: 7, damageImmune: false } },
-  { id: "sleeping_bag", category: "deployable", stackMax: 1, building: { tier: "wood", maxHp: 250, decayDays: 3, damageImmune: false } },
+  // ---- building & deployables (M4: full grid rules) ----
+  { id: "wood_shelter", category: "building", stackMax: 1, building: { tier: "wood", maxHp: 500, decayDays: 3, damageImmune: false, breach: "melee", storageSlots: 0, restable: false } },
+  { id: "wood_wall", category: "building", stackMax: 1, building: { tier: "wood", maxHp: 800, decayDays: 10, damageImmune: false, breach: "melee", storageSlots: 0, restable: false } },
+  { id: "wood_door", category: "building", stackMax: 1, building: { tier: "wood", maxHp: 500, decayDays: 3, damageImmune: false, breach: "melee", storageSlots: 0, restable: false } },
+  { id: "wood_barricade", category: "building", stackMax: 1, building: { tier: "wood", maxHp: 400, decayDays: 3, damageImmune: false, breach: "melee", storageSlots: 0, restable: false } },
+  { id: "campfire", category: "deployable", stackMax: 1, building: { tier: "wood", maxHp: 250, decayDays: 3, damageImmune: false, breach: "explosive_only", storageSlots: 0, restable: false } },
+  { id: "furnace", category: "deployable", stackMax: 1, building: { tier: "wood", maxHp: 1000, decayDays: 7, damageImmune: false, breach: "explosive_only", storageSlots: 0, restable: false } },
+  { id: "workbench", category: "deployable", stackMax: 1, building: { tier: "wood", maxHp: 500, decayDays: 7, damageImmune: false, breach: "explosive_only", storageSlots: 0, restable: false } },
+  { id: "wood_storage_box", category: "deployable", stackMax: 1, building: { tier: "wood", maxHp: 500, decayDays: 7, damageImmune: false, breach: "explosive_only", storageSlots: 12, restable: false } },
+  { id: "sleeping_bag", category: "deployable", stackMax: 1, building: { tier: "wood", maxHp: 250, decayDays: 3, damageImmune: false, breach: "melee", storageSlots: 0, restable: true } },
 ];

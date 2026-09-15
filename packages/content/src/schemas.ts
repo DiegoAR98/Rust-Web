@@ -96,6 +96,15 @@ export const buildingSchema = z.object({
   decayDays: z.number().positive(),
   /** damage-immune pieces: foundation/pillar/ceiling */
   damageImmune: z.boolean(),
+  /** M4 (GDD §10): how the piece can be breached.
+   *  "melee" = breakable by tool swings (doors, shutters, barricades, shelter);
+   *  "explosive_only" = immune to melee, M6 charges only (walls, stations);
+   *  "immune" = foundations/pillars/ceilings (removed by decay only). */
+  breach: z.enum(["melee", "explosive_only", "immune"]),
+  /** M4: storage structure slot count (0 = not a storage piece) */
+  storageSlots: z.number().int().min(0).max(24).default(0),
+  /** M4: rest structure (sleeping bag) */
+  restable: z.boolean().default(false),
 });
 
 export const itemSchema = z.object({

@@ -47,6 +47,10 @@ export interface EntitySave {
     maxHp?: number;
     /** M3: in-flight station craft (survives a restart) */
     craft?: { recipeId: string; completesAtTick: number; startedBy: string };
+    /** M4: storage structure contents (survives a restart) */
+    storage?: (ItemStack | null)[];
+    /** M4: last decay-maintenance tick */
+    lastMaintainedAtTick?: number;
   };
 }
 

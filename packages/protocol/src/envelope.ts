@@ -67,6 +67,24 @@ export const ClientCommandSchema = z.discriminatedUnion("kind", [
         position: PlacementPositionSchema,
       })
       .optional(),
+    /** M4: deposit the inventory stack in fromSlot into a storage structure's toSlot */
+    deposit: z
+      .object({
+        structureEntityId: z.string().regex(/^e_[0-9a-f]{4,}$/),
+        fromSlot: z.number().int().min(0).max(35),
+        toSlot: z.number().int().min(0).max(23),
+      })
+      .optional(),
+    /** M4: withdraw a storage structure's fromSlot stack into inventory toSlot */
+    withdraw: z
+      .object({
+        structureEntityId: z.string().regex(/^e_[0-9a-f]{4,}$/),
+        fromSlot: z.number().int().min(0).max(23),
+        toSlot: z.number().int().min(0).max(35),
+      })
+      .optional(),
+    /** M4: rest next to a sleeping bag */
+    rest: z.object({ structureEntityId: z.string().regex(/^e_[0-9a-f]{4,}$/) }).optional(),
     /** hotbar slot 0..7 selection; the server derives heldItemId from it */
     heldSlot: z.number().int().min(-1).max(35).optional(),
   }),

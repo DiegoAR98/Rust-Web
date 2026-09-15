@@ -200,4 +200,31 @@ describe("host <-> WorldRepository round-trip (GDD 21)", () => {
     const p2 = [...host2.store.values()].find((e) => e.kind === "player" && e.playerId === playerId) as PlayerEntity;
     expect(p2.blueprints).toContain("bp_pickaxe");
   });
+
+  it("restores M4 structure state: hp, storage contents and maintenance tick", () => {
+    const repo = repoFor();
+    const host = new Host("test_server", "world_persist", 0x1, 0x2, 8);
+    const { playerId } = connectAndReady(host);
+    for (let i = 0; i < 3; i++) host.tick();
+    const p = [...host.store.values()].find((e) => e.kind === "player" && e.playerId === playerId) as PlayerEntity;
+    p.inventory[0] = { itemId: "wood_storage_box" as never, quantity: 1 };
+    const pos = { x: p.position.x, y: p.position.y, z: p.position.z + 300 };
+    const pr = placeStructure(host.world, host.store, p, 0, pos);
+    if (!pr.ok) throw new Error(`place failed: ${pr.reason}`);
+    const box = host.store.get(pr.structureEntityId!) as StructureEntity;
+    box.hp = 250; // partially damaged
+    box.lastMaintainedAtTick = 4242;
+    box.storage[0] = { itemId: "wood" as never, quantity: 7 };
+
+    repo.save(host.toSaveDocument());
+    const host2 = new Host("test_server", "world_persist", 0x1, 0x2, 8);
+    host2.restoreFromSave(repo.load()!);
+    const box2 = host2.store.get(box.id) as StructureEntity;
+    expect(box2.contentId).toBe("wood_storage_box");
+    expect(box2.ownerId).toBe(playerId);
+    expect(box2.hp).toBe(250);
+    expect(box2.maxHp).toBe(500);
+    expect(box2.lastMaintainedAtTick).toBe(4242);
+    expect(box2.storage[0]).toEqual({ itemId: "wood", quantity: 7 });
+  });
 });

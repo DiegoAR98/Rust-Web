@@ -31,6 +31,13 @@ import { commitDeath, type DeathTransaction } from "./death.js";
 import { loot, dropToGround, applyGroundDespawn } from "./pickup.js";
 import { moveSlot, equipFromSlot, unequipSlot, type MoveResult } from "./inventory.js";
 import { startCraft, advanceCrafts, research as researchBp, placeStructure } from "./crafting.js";
+import {
+  attackStructure,
+  depositToStructure,
+  withdrawFromStructure,
+  restAtStructure,
+  applyStructureDecay,
+} from "./structures.js";
 import type { EntityStore, PlayerEntity } from "./entities.js";
 import type { World } from "./world.js";
 import type { Vec3 } from "@dustfall/contracts";
@@ -52,6 +59,12 @@ export interface TickCommand {
   research?: { structureEntityId: string; itemId: string };
   /** M3: place a structure from a grid slot */
   place?: { slot: number; position: Vec3 };
+  /** M4: deposit an inventory stack into a storage structure slot */
+  deposit?: { structureEntityId: string; fromSlot: number; toSlot: number };
+  /** M4: withdraw a storage structure stack into the inventory */
+  withdraw?: { structureEntityId: string; fromSlot: number; toSlot: number };
+  /** M4: rest next to a sleeping bag (health regen; full sleep = M5) */
+  rest?: { structureEntityId: string };
   heldItemId?: string | null;
 }
 
@@ -93,6 +106,16 @@ export interface TickEvents {
   researched: Array<{ playerId: string; payload: string }>;
   /** M3: structures placed this tick */
   placed: Array<{ playerId: string; structureEntityId: string; contentId: string }>;
+  /** M4: structure damage from tool swings */
+  attacked: Array<{
+    playerId: string;
+    structureEntityId: string;
+    damage: number;
+    hpAfter: number;
+    destroyed: boolean;
+  }>;
+  /** M4: structures destroyed this tick (breach OR decay) */
+  destroyed: string[];
 }
 
 /**
@@ -105,7 +128,7 @@ export const runTick = (world: World, store: EntityStore, commands: TickCommand[
     return a.sequence - b.sequence;
   });
 
-  const events: TickEvents = { moved: [], died: [], gathered: [], deaths: [], respawnedNodes: [], despawnedGround: [], inventory: [], crafted: [], researched: [], placed: [] };
+  const events: TickEvents = { moved: [], died: [], gathered: [], deaths: [], respawnedNodes: [], despawnedGround: [], inventory: [], crafted: [], researched: [], placed: [], attacked: [], destroyed: [] };
 
   // group by player; the last command is the authoritative movement frame
   const byPlayer = new Map<string, TickCommand[]>();
@@ -128,15 +151,31 @@ export const runTick = (world: World, store: EntityStore, commands: TickCommand[
     for (const cmd of cmds ?? []) {
       last = cmd;
       if (cmd.swing) {
-        const r: SwingResult = resolveSwing(world, store, p, cmd.swing.targetEntityId);
-        if (r.ok) {
-          events.gathered.push({
-            playerId: p.playerId,
-            nodeEntityId: cmd.swing.targetEntityId,
-            payout: r.payout,
-            secondaries: r.secondaries.map((s) => ({ itemId: s.itemId, quantity: s.quantity })),
-            depleted: r.depleted,
-          });
+        // M4: a swing may target a structure (breach) as well as a node
+        const swingTarget = store.get(cmd.swing.targetEntityId as import("@dustfall/contracts").EntityId);
+        if (swingTarget && swingTarget.kind === "structure") {
+          const ar = attackStructure(world, store, p, cmd.swing.targetEntityId);
+          if (ar.ok) {
+            events.attacked.push({
+              playerId: p.playerId,
+              structureEntityId: cmd.swing.targetEntityId,
+              damage: ar.damage,
+              hpAfter: ar.hpAfter,
+              destroyed: ar.destroyed,
+            });
+            if (ar.destroyed) events.destroyed.push(cmd.swing.targetEntityId);
+          }
+        } else {
+          const r: SwingResult = resolveSwing(world, store, p, cmd.swing.targetEntityId);
+          if (r.ok) {
+            events.gathered.push({
+              playerId: p.playerId,
+              nodeEntityId: cmd.swing.targetEntityId,
+              payout: r.payout,
+              secondaries: r.secondaries.map((s) => ({ itemId: s.itemId, quantity: s.quantity })),
+              depleted: r.depleted,
+            });
+          }
         }
       }
       if (cmd.pickup) {
@@ -197,6 +236,27 @@ export const runTick = (world: World, store: EntityStore, commands: TickCommand[
           if (st && st.kind === "structure") events.placed.push({ playerId: p.playerId, structureEntityId: st.id, contentId: st.contentId });
         }
       }
+      if (cmd.deposit) {
+        const r = depositToStructure(world, store, p, cmd.deposit.structureEntityId, cmd.deposit.fromSlot, cmd.deposit.toSlot);
+        events.inventory.push({
+          playerId: p.playerId,
+          kind: "move",
+          ok: r.ok,
+          touched: r.ok ? [cmd.deposit.fromSlot] : [],
+        });
+      }
+      if (cmd.withdraw) {
+        const r = withdrawFromStructure(world, store, p, cmd.withdraw.structureEntityId, cmd.withdraw.fromSlot, cmd.withdraw.toSlot);
+        events.inventory.push({
+          playerId: p.playerId,
+          kind: "move",
+          ok: r.ok,
+          touched: r.ok ? [cmd.withdraw.toSlot] : [],
+        });
+      }
+      if (cmd.rest) {
+        restAtStructure(world, store, p, cmd.rest.structureEntityId);
+      }
     }
     if (last?.heldItemId !== undefined) p.heldItemId = (last.heldItemId ?? null) as PlayerEntity["heldItemId"];
 
@@ -236,6 +296,10 @@ export const runTick = (world: World, store: EntityStore, commands: TickCommand[
   //     craft with completesAtTick == oldTick+T completes on the T+1th tick
   //     observed (completesAtTick > startTick).
   events.crafted.push(...advanceCrafts(world, store));
+
+  // 7c. M4: unattended structure decay (GDD §10). Runs after the clock so
+  //     lastMaintainedAtTick < tick means "a full decay window elapsed".
+  events.destroyed.push(...applyStructureDecay(world, store));
 
   return events;
 };

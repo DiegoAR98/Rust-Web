@@ -111,6 +111,10 @@ export interface StructureEntity {
   } | null;
   hp: number;
   maxHp: number;
+  /** M4: storage structure contents (0-length when the piece has no slots) */
+  storage: (ItemStack | null)[];
+  /** M4: last tick the owner was within decay.owner_refresh_m (GDD §10) */
+  lastMaintainedAtTick: number;
 }
 
 export type Entity = PlayerEntity | WorldEntity | CorpseEntity | GroundItemEntity | StructureEntity;

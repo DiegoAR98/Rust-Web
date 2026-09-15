@@ -126,6 +126,31 @@ export const RECIPES: readonly RecipeDef[] = [
     station: "hand",
     timeTicks: 150, // 5 s
   },
+  // ---- M4 grid pieces (GDD §10) ----
+  {
+    id: "recipe_wood_wall",
+    outputItemId: "wood_wall",
+    outputQuantity: 1,
+    inputs: [{ itemId: "wood", quantity: 6 }],
+    station: "hand",
+    timeTicks: 300, // 10 s
+  },
+  {
+    id: "recipe_wood_door",
+    outputItemId: "wood_door",
+    outputQuantity: 1,
+    inputs: [{ itemId: "wood", quantity: 6 }, { itemId: "metal_fragments", quantity: 1 }],
+    station: "hand",
+    timeTicks: 450, // 15 s
+  },
+  {
+    id: "recipe_wood_barricade",
+    outputItemId: "wood_barricade",
+    outputQuantity: 1,
+    inputs: [{ itemId: "wood", quantity: 4 }],
+    station: "hand",
+    timeTicks: 120, // 4 s
+  },
   // ---- M3 station conversions (GDD Appendix B: furnace + campfire) ----
   {
     id: "recipe_cooked_rabbit_meat",

@@ -11,6 +11,7 @@
 import { describe, expect, it } from "vitest";
 import { createWorld, newPlayer, EntityStore, startCraft, advanceCrafts, research, placeStructure, commitDeath, runTick } from "@dustfall/sim";
 import type { PlayerEntity, StructureEntity } from "@dustfall/sim";
+import { ITEMS } from "@dustfall/content";
 
 const testWorld = () => createWorld("test", 0x12345678, 0xabcdef00);
 
@@ -27,7 +28,20 @@ const mk = (playerId: string, items: Array<{ itemId: string; quantity: number }>
 };
 
 const place = (store: EntityStore, contentId: string, ownerId: string, x = 0, z = 100): StructureEntity => {
-  const st: StructureEntity = { id: store.allocate(), kind: "structure", contentId, position: { x, y: 0, z }, ownerId, craft: null, hp: 100, maxHp: 100 };
+  const def = ITEMS.find((i) => i.id === contentId);
+  const hp = def?.building?.maxHp ?? 100;
+  const st: StructureEntity = {
+    id: store.allocate(),
+    kind: "structure",
+    contentId,
+    position: { x, y: 0, z },
+    ownerId,
+    craft: null,
+    hp,
+    maxHp: hp,
+    storage: Array.from({ length: def?.building?.storageSlots ?? 0 }, () => null),
+    lastMaintainedAtTick: 0,
+  };
   store.insert(st);
   return st;
 };

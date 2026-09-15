@@ -22,6 +22,15 @@ import { freshVitals } from "@dustfall/contracts";
 import { SessionRegistry } from "./session.js";
 import { derivePlayerId, freshNonce, verifyProof, issueSessionToken } from "./identity.js";
 
+/** Stable signature for a structure's wire-relevant state (M4): integrity +
+ *  storage stacks + active station craft. A delta is emitted only when this
+ *  changes (avoids re-sending unchanged structures every batch). */
+const structureSig = (st: import("@dustfall/sim").StructureEntity): string => {
+  const storageSig = st.storage.map((s) => (s ? `${s.itemId}:${s.quantity}` : "")).join("|");
+  const craft = st.craft ? `${st.craft.recipeId}@${st.craft.completesAtTick}` : "";
+  return `${st.hp}|${storageSig}|${craft}`;
+};
+
 /** per-batch snapshot of node state, for delta computation */
 interface NodeSnapshot {
   pool: number;
@@ -43,8 +52,8 @@ export class Host {
   private readonly issuedTokens = new Map<string, string>();
   /** entity id -> last-sent node payload */
   private readonly nodeSeen = new Map<string, NodeSnapshot>();
-  /** entity id -> last-sent structure craft payload (null = idle) */
-  private readonly structureSeen = new Map<string, { recipeId: string; completesAtTick: number; startedBy: string } | null>();
+  /** entity id -> last-sent structure signature (hp + storage + craft) */
+  private readonly structureSeen = new Map<string, string>();
   /** entities sent to at least one ready session (new ones need a spawn record) */
   private readonly globalSent = new Set<string>();
   /** events awaiting forwarding (batches only fire on odd ticks; no tick's events may be dropped, §21.7) */
@@ -183,7 +192,7 @@ export class Host {
     p.dead = true;
     const tx = commitDeath(this.world, this.store, p);
     if (tx) {
-      this.pendingEvents.push({ moved: [], died: [playerId], gathered: [], deaths: [tx], respawnedNodes: [], despawnedGround: [], inventory: [], crafted: [], researched: [], placed: [] });
+      this.pendingEvents.push({ moved: [], died: [playerId], gathered: [], deaths: [tx], respawnedNodes: [], despawnedGround: [], inventory: [], crafted: [], researched: [], placed: [], attacked: [], destroyed: [] });
       for (const h of this.deathHooks) h();
     }
     return tx?.corpseEntityId ?? null;
@@ -268,6 +277,10 @@ export class Host {
           }
           if (cmd.research) intent.research = cmd.research;
           if (cmd.place) intent.place = cmd.place;
+          // M4 intents
+          if (cmd.deposit) intent.deposit = cmd.deposit;
+          if (cmd.withdraw) intent.withdraw = cmd.withdraw;
+          if (cmd.rest) intent.rest = cmd.rest;
           if (cmd.heldSlot !== undefined && p) {
             intent.heldItemId = p.inventory[cmd.heldSlot]?.itemId ?? null;
           }
@@ -358,7 +371,7 @@ export class Host {
         }
       } else if (e.kind === "structure") {
         const st = e as import("@dustfall/sim").StructureEntity;
-        const craftState = st.craft ?? null;
+        const sig = structureSig(st);
         if (!this.globalSent.has(e.id)) {
           records.push({
             kind: "spawn",
@@ -368,26 +381,23 @@ export class Host {
             position: { x: st.position.x, y: st.position.y, z: st.position.z },
             ownerId: st.ownerId,
             hp: st.hp,
+            maxHp: st.maxHp,
+            storage: st.storage,
             craft: st.craft ?? undefined,
           });
         } else {
-          const seenCraft = this.structureSeen.get(e.id) ?? null;
-          const same =
-            seenCraft === null
-              ? craftState === null
-              : craftState !== null &&
-                seenCraft.recipeId === craftState.recipeId &&
-                seenCraft.completesAtTick === craftState.completesAtTick &&
-                seenCraft.startedBy === craftState.startedBy;
-          if (!same) {
+          const seenSig = this.structureSeen.get(e.id);
+          if (seenSig !== sig) {
             records.push({
               kind: "delta",
               entityId: e.id,
+              hp: st.hp,
+              storage: st.storage,
               craft: st.craft ?? undefined, // undefined when idle: clear the client's bar
             });
           }
         }
-        this.structureSeen.set(e.id, craftState);
+        this.structureSeen.set(e.id, sig);
       }
       this.globalSent.add(e.id);
     }
@@ -435,6 +445,19 @@ export class Host {
       }
       for (const pl of ev.placed) {
         records.push({ kind: "event", entityId: pl.structureEntityId, event: "build", payload: { playerId: pl.playerId, contentId: pl.contentId } });
+      }
+      // M4: structure damage + destruction
+      for (const atk of ev.attacked) {
+        records.push({
+          kind: "event",
+          entityId: atk.structureEntityId,
+          event: "structure_hit",
+          payload: { playerId: atk.playerId, damage: atk.damage, hpAfter: atk.hpAfter, destroyed: atk.destroyed },
+        });
+      }
+      for (const did of ev.destroyed) {
+        records.push({ kind: "event", entityId: did, event: "structure_destroyed", payload: { entityId: did } });
+        records.push({ kind: "forget", entityId: did });
       }
     }
 
@@ -557,10 +580,12 @@ export class Host {
           position: { x: st.position.x, y: st.position.y, z: st.position.z },
           ownerId: st.ownerId,
           hp: st.hp,
+          maxHp: st.maxHp,
+          storage: st.storage,
         };
         if (st.craft) rec.craft = st.craft;
         records.push(rec);
-        this.structureSeen.set(e.id, st.craft ?? null);
+        this.structureSeen.set(e.id, structureSig(st));
       }
     }
     const snapshot: SnapshotProto = {
@@ -707,9 +732,14 @@ export class Host {
           contentId: st.contentId,
           position: { ...st.position },
           pool: 0,
-          payload: st.craft
-            ? { ownerId: st.ownerId, hp: st.hp, maxHp: st.maxHp, craft: { ...st.craft } }
-            : { ownerId: st.ownerId, hp: st.hp, maxHp: st.maxHp },
+          payload: {
+            ownerId: st.ownerId,
+            hp: st.hp,
+            maxHp: st.maxHp,
+            storage: st.storage.map((s) => (s ? { ...s } : null)),
+            lastMaintainedAtTick: st.lastMaintainedAtTick,
+            ...(st.craft ? { craft: { ...st.craft } } : {}),
+          },
         });
       }
     }
@@ -798,9 +828,11 @@ export class Host {
             : null,
           hp: es.payload?.hp ?? 100,
           maxHp: es.payload?.maxHp ?? 100,
+          storage: (es.payload?.storage ?? []).map((s) => (s ? { ...s } : null)),
+          lastMaintainedAtTick: es.payload?.lastMaintainedAtTick ?? this.world.clock.tick,
         };
         this.store.insert(st);
-        this.structureSeen.set(st.id, null);
+        this.structureSeen.set(st.id, structureSig(st));
         restoredIds.push(es.entityId);
       }
     }

@@ -32,6 +32,10 @@ export const SpawnRecordSchema = z.object({
   /** M3: structure owner + integrity */
   ownerId: z.string().min(3).max(80).optional(),
   hp: z.number().int().optional(),
+  /** M4: structure max integrity */
+  maxHp: z.number().int().optional(),
+  /** M4: storage structure contents */
+  storage: z.array(ItemStackSchema.nullable()).max(24).optional(),
   /** M3: active station craft at join time */
   craft: z
     .object({
@@ -74,6 +78,10 @@ export const DeltaRecordSchema = z.object({
   blueprints: z.array(z.string().max(64)).max(32).optional(),
   /** M3: structure integrity / active craft */
   hp: z.number().int().optional(),
+  /** M4: structure max integrity (for the client's bar) */
+  maxHp: z.number().int().optional(),
+  /** M4: storage structure contents (delta replaces the whole grid) */
+  storage: z.array(ItemStackSchema.nullable()).max(24).optional(),
   craft: z
     .object({
       recipeId: z.string().min(2).max(64),
@@ -108,6 +116,9 @@ export const EventRecordSchema = z.object({
     "node_respawn",
     "ground_despawn",
     "respawn",
+    // M4 authoritative events (GDD §10, §11)
+    "structure_hit",
+    "structure_destroyed",
   ]),
   payload: z.record(z.unknown()).default({}),
 });

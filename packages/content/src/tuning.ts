@@ -46,6 +46,11 @@ export const TUNING: TuningDef = {
   "build.place_reach_m": 5.0, // max distance to place a structure from the player
   "build.min_spacing_m": 2.0, // min center-to-center distance between structures
   "build.max_structures_per_player": 32,
+  // M4: decay — unattended structures lose integrity on this timer; owner
+  // within 50 m refreshes the timer (GDD §10: "Decay refreshes when the
+  // owner is within 50 m").
+  "decay.owner_refresh_m": 50, // owner proximity that suspends decay
+  "decay.step_fraction": 0.1, // integrity lost per decay step (of maxHp)
   "ai.max_humans": 14,
   "ai.max_animals": 8,
   "ai.evidence_memory_seconds": 30,

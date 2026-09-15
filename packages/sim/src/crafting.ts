@@ -21,7 +21,7 @@
  */
 import { ITEMS, RECIPES, BLUEPRINTS } from "@dustfall/content";
 import { TUNING } from "@dustfall/content";
-import type { Vec3 } from "@dustfall/contracts";
+import type { Vec3, ItemStack } from "@dustfall/contracts";
 import type { EntityStore, PlayerEntity, StructureEntity } from "./entities.js";
 import type { World } from "./world.js";
 import { spawnGroundItem } from "./pickup.js";
@@ -264,7 +264,7 @@ export const research = (
  * range, spacing and per-player cap; the client ghost is provisional.
  */
 export const placeStructure = (
-  _world: World,
+  world: World,
   store: EntityStore,
   p: PlayerEntity,
   slot: number,
@@ -295,6 +295,7 @@ export const placeStructure = (
   if (s.quantity === 0) p.inventory[slot] = null;
 
   const hp = def.building?.maxHp ?? 100;
+  const storageSlots = def.building?.storageSlots ?? 0;
   const structure: StructureEntity = {
     id: store.allocate(),
     kind: "structure",
@@ -304,6 +305,8 @@ export const placeStructure = (
     craft: null,
     hp,
     maxHp: hp,
+    storage: new Array<ItemStack | null>(storageSlots).fill(null),
+    lastMaintainedAtTick: world.clock.tick,
   };
   store.insert(structure);
   return { ok: true, structureEntityId: structure.id };
