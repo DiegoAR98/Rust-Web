@@ -2,7 +2,7 @@
  * Entity store: stable ascending EntityId iteration (GDD §21.5).
  * M1 components: position, posture, vitals, inventory, equipment, blueprints.
  */
-import type { EntityId, PlayerId, Vec3, Vitals, ItemStack } from "@dustfall/contracts";
+import type { EntityId, PlayerId, Vec3, Vitals, ItemStack, ItemId } from "@dustfall/contracts";
 import { freshVitals, INVENTORY_SLOTS, type EquipmentSlot, EQUIPMENT_SLOTS } from "@dustfall/contracts";
 import { createEntityId } from "./ids.js";
 
@@ -24,6 +24,14 @@ export interface PlayerEntity {
   yawHundredths: number;
   pitchHundredths: number;
   vitals: Vitals;
+  /**
+   * The item id held in hand (the tool/weapon used for gathering swings,
+   * GDD §7). The client selects it via hotbar; the server treats it as
+   * input, not outcome.
+   */
+  heldItemId: ItemId | null;
+  /** tick until which swings are on cooldown (GDD §7 swing cadence) */
+  swingCooldownUntilTick: number;
   /** 36 slots, null = empty */
   inventory: (ItemStack | null)[];
   /** 4 equipment slots */
@@ -44,6 +52,17 @@ export interface WorldEntity {
   position: Vec3;
   /** node pool remaining (resources) or structure hp */
   pool: number;
+  /**
+   * Harvest accumulator: fractions of a resource unit accrued by
+   * tool-multiplier swings (GDD §7). Each whole unit pays out one
+   * resource and the pool decreases by one.
+   */
+  accumulator: number;
+  /**
+   * Depletion state: a depleted node stays in place (no collision, no
+   * yield) until its seeded respawn timer elapses. respawnAtTick is set
+   * to the tick it was depleted; 0 = not respawnable.
+   */
   respawnAtTick: number;
 }
 
@@ -127,6 +146,8 @@ export const newPlayer = (
   posture: "standing",
   yawHundredths: 0,
   pitchHundredths: 0,
+  heldItemId: null,
+  swingCooldownUntilTick: 0,
   vitals: freshVitals(),
   inventory: new Array<ItemStack | null>(INVENTORY_SLOTS).fill(null),
   equipment: {},

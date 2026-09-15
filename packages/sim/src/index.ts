@@ -4,5 +4,7 @@ export * from "./ids.js";
 export * from "./movement.js";
 export * from "./vitals-sys.js";
 export * from "./inventory.js";
+export * from "./gathering.js";
+export * from "./worldgen.js";
 export * from "./tick.js";
 export * from "./rng.js";
