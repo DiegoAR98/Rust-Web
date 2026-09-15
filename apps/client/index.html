@@ -5,17 +5,46 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Frontier Legacy: Dustfall</title>
     <style>
-      html, body { margin: 0; height: 100%; background: #1a1512; color: #d8c9a8; font-family: monospace; }
-      #hud { position: fixed; top: 12px; left: 12px; font-size: 13px; z-index: 10; line-height: 1.5; }
-      #notice { position: fixed; bottom: 12px; left: 12px; font-size: 12px; color: #a89070; }
+      html, body { margin: 0; height: 100%; background: #1a1512; color: #d8c9a8; font-family: monospace; overflow: hidden; }
+      #hud { position: fixed; top: 12px; left: 12px; font-size: 13px; z-index: 10; line-height: 1.5; pointer-events: none; }
+      #notice { position: fixed; bottom: 12px; left: 12px; font-size: 12px; color: #a89070; z-index: 10; pointer-events: none; }
       canvas { display: block; }
       .bar { display: inline-block; width: 120px; height: 8px; background: #2a231c; vertical-align: middle; }
       .bar > div { height: 100%; }
+
+      #hotbar { position: fixed; bottom: 44px; left: 50%; transform: translateX(-50%); display: flex; gap: 4px; z-index: 10; }
+      .hb { width: 48px; height: 48px; background: #241d16; border: 1px solid #4a3b28; font-size: 11px; display: flex; flex-direction: column; align-items: center; justify-content: center; cursor: pointer; user-select: none; }
+      .hb.active { border-color: #d8b040; background: #322818; }
+      .hb .q { font-size: 9px; color: #d8b040; }
+
+      #inv { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 460px; background: #241d16ee; border: 1px solid #4a3b28; padding: 16px; z-index: 20; display: none; }
+      #inv h3 { margin: 0 0 10px; font-size: 14px; color: #d8b040; }
+      #inv-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 4px; }
+      .slot { height: 56px; background: #1a140f; border: 1px solid #3a2e1f; font-size: 11px; display: flex; flex-direction: column; align-items: center; justify-content: center; cursor: pointer; user-select: none; overflow: hidden; }
+      .slot:hover { border-color: #8a7340; }
+      .slot.held { border-color: #d8b040; background: #322818; }
+      .slot .q { font-size: 10px; color: #d8b040; }
+
+      #death { position: fixed; inset: 0; background: #00000099; z-index: 30; display: none; flex-direction: column; align-items: center; justify-content: center; gap: 16px; }
+      #death h2 { color: #a33; font-size: 28px; margin: 0; }
+      #death p { color: #d8c9a8; max-width: 420px; text-align: center; }
+      #respawn { background: #322818; color: #d8b040; border: 1px solid #d8b040; font-family: monospace; font-size: 14px; padding: 10px 24px; cursor: pointer; }
+      #respawn:disabled { opacity: 0.5; cursor: wait; }
     </style>
   </head>
   <body>
     <div id="hud">Frontier Legacy: Dustfall — connecting…</div>
     <div id="notice">Click the canvas to lock the pointer.</div>
+    <div id="hotbar"></div>
+    <div id="inv">
+      <h3>Inventory — click: pick up / place, right-click: drop to ground</h3>
+      <div id="inv-grid"></div>
+    </div>
+    <div id="death">
+      <h2>YOU DIED</h2>
+      <p>Your gear is scattered at the point of death. Reconnect within 5 minutes to recover it — your body will respawn at Bootheel Landing.</p>
+      <button id="respawn">Respawn</button>
+    </div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

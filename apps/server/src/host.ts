@@ -277,19 +277,10 @@ export class Host {
     const records: SnapshotProto["records"] = [];
     for (const e of this.store.values()) {
       if (e.kind === "player") {
-        const p = e as PlayerEntity;
-        if (!p.dead) {
-          records.push({
-            kind: "delta",
-            entityId: p.id,
-            position: { x: Math.round(p.position.x), y: Math.round(p.position.y), z: Math.round(p.position.z) },
-            yawHundredths: p.yawHundredths,
-            pitchHundredths: p.pitchHundredths,
-            health: Math.round(p.vitals.health),
-            calories: Math.round(p.vitals.calories),
-            posture: p.posture,
-          });
-        }
+        // player body deltas are emitted per-session below: every session
+        // sees every LIVE player's body, but the inventory grid rides only
+        // on the session's OWN record (a client never sees another
+        // player's inventory, GDD §22)
       } else if (e.kind === "world") {
         const w = e as WorldEntity;
         const seen = this.nodeSeen.get(e.id);
@@ -364,22 +355,46 @@ export class Host {
       }
     }
 
-    const snapshot: SnapshotProto = {
-      protocol: 1,
-      serverTick: this.world.clock.tick,
-      batchSequence: this.batchSequence,
-      ackInputSequence: 0,
-      baselineId: this.baselineId,
-      records,
-    };
-    this.batchSequence += 1;
-    const payload = encode(snapshot);
+    // the shared records are sent to every ready session, but each session's
+    // own body delta carries its live inventory grid (the client only ever
+    // sees its own inventory — never another player's, GDD §22)
     for (const [sessionId, writer] of this.writers) {
       const s = this.sessions.get(sessionId);
       if (!s || s.state !== "ready") continue;
+      const own = this.playerFor(s);
+      const recs: SnapshotProto["records"] = [...records];
+      // every live player's body (position/vitals); inventory only on own record
+      for (const e of this.store.values()) {
+        const p = e as PlayerEntity;
+        if (p.kind !== "player" || p.dead) continue;
+        const isOwn = p.id === own?.id;
+        const rec: SnapshotProto["records"][number] = {
+          kind: "delta",
+          entityId: p.id,
+          playerId: p.playerId,
+          position: { x: Math.round(p.position.x), y: Math.round(p.position.y), z: Math.round(p.position.z) },
+          yawHundredths: p.yawHundredths,
+          pitchHundredths: p.pitchHundredths,
+          health: Math.round(p.vitals.health),
+          calories: Math.round(p.vitals.calories),
+          posture: p.posture,
+        };
+        if (isOwn) rec.inventory = p.inventory;
+        recs.push(rec);
+      }
+      const snapshot: SnapshotProto = {
+        protocol: 1,
+        serverTick: this.world.clock.tick,
+        batchSequence: this.batchSequence,
+        ackInputSequence: 0,
+        baselineId: this.baselineId,
+        records: recs,
+      };
+      const payload = encode(snapshot);
       s.queuedBytes += payload.byteLength;
       writer(Buffer.from(payload), true);
     }
+    this.batchSequence += 1;
   }
 
   // ------------------------------------------------------------------
@@ -402,6 +417,7 @@ export class Host {
           kind: "spawn",
           entityId: p.id,
           kindTag: "player",
+          playerId: p.playerId,
           position: { x: Math.round(p.position.x), y: Math.round(p.position.y), z: Math.round(p.position.z) },
         };
         // msgpack encodes undefined as null: only set keys that are present

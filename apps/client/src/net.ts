@@ -1,16 +1,52 @@
 /**
- * WebSocket gateway: JSON hello, binary msgpack envelopes/snapshots.
+ * WebSocket gateway: M2 handshake (challenge -> identity -> grant -> baseline
+ * -> ready) then msgpack gameplay envelopes/snapshots (GDD §22.4, §21.7).
  */
 import { encode, decode } from "@msgpack/msgpack";
-import type { ClientEnvelopeProto, SnapshotProto } from "@dustfall/protocol";
+import type {
+  ClientEnvelopeProto,
+  ClientCommandProto,
+  SnapshotProto,
+} from "@dustfall/protocol";
+import { ensureIdentity, signChallenge, type PublicJwk } from "./identity.js";
+
+/** Server handshake challenge (JSON, first text frame). */
+interface ChallengeMsg {
+  protocol: number;
+  kind: "challenge";
+  sessionId: string;
+  nonce: string;
+  serverTick: number;
+  worldId: string;
+}
+
+/** Server session grant (JSON, after identity verification). */
+export interface GrantMsg {
+  protocol: number;
+  kind: "session_grant";
+  sessionId: string;
+  playerId: string;
+  expiresAt: number;
+  token: string;
+  hasSavedPlayer: boolean;
+}
 
 export class GameSocket {
   private ws: WebSocket;
   private sequence = 0;
   private clientTick = 0;
   private sessionId = "";
+  private pendingChallenge: string | null = null;
+  private signingKey: CryptoKey | null = null;
+  private grant: GrantMsg | null = null;
+  private resolvingGrant: ((g: GrantMsg) => void) | null = null;
+  private rejectingGrant: ((e: Error) => void) | null = null;
+
+  public publicJwk: PublicJwk | null = null;
+  public state: "connecting" | "authenticating" | "connected" | "closed" = "connecting";
   onSnapshot: ((s: SnapshotProto) => void) | null = null;
-  onHello: (() => void) | null = null;
+  onReady: (() => void) | null = null;
+  onKicked: ((reason: string) => void) | null = null;
 
   constructor(url: string) {
     this.ws = new WebSocket(url);
@@ -19,36 +55,126 @@ export class GameSocket {
     this.ws.binaryType = "arraybuffer";
   }
 
-  get ready(): boolean {
-    return this.ws.readyState === WebSocket.OPEN && this.sessionId !== "";
+  get connected(): boolean {
+    return this.ws.readyState === WebSocket.OPEN;
   }
 
-  private onOpen = (): void => {
-    // wait for server hello
-  };
+  get ready(): boolean {
+    return this.ws.readyState === WebSocket.OPEN && this.grant !== null;
+  }
+
+  get playerIdentity(): { sessionId: string; playerId: string } | null {
+    return this.grant ? { sessionId: this.grant.sessionId, playerId: this.grant.playerId } : null;
+  }
+
+  /**
+   * Drive the handshake: load/generate the P-256 identity, wait for the
+   * challenge, sign it, send the proof and resolve once the server grants.
+   * Rejects if the server disconnects or kicks before the grant.
+   */
+  connect(): Promise<GrantMsg> {
+    this.ws.onopen = () => {
+      this.state = "authenticating";
+    };
+    this.ws.onmessage = this.onMessage;
+    this.ws.onerror = (ev) => console.error("socket error", ev);
+    this.ws.onclose = (ev) => {
+      const reason = `socket closed (code ${ev.code})`;
+      if (this.rejectingGrant) {
+        const reject = this.rejectingGrant;
+        this.rejectingGrant = null;
+        reject(new Error(reason));
+      }
+      this.state = "closed";
+      if (this.ws.readyState !== WebSocket.OPEN) {
+        this.state = "closed";
+      }
+    };
+
+    return new Promise<GrantMsg>((resolve, reject) => {
+      this.resolvingGrant = resolve;
+      this.rejectingGrant = reject;
+      ensureIdentity().then(([pub, key]) => {
+        this.publicJwk = pub;
+        this.signingKey = key;
+        // If the challenge arrived before identity was ready, answer now.
+        if (this.pendingChallenge) {
+          this.answerChallenge(this.pendingChallenge);
+        }
+      }).catch((err) => {
+        reject(err instanceof Error ? err : new Error("identity unavailable"));
+      });
+    });
+  }
+
+  private answerChallenge(nonce: string): void {
+    if (!this.signingKey || !this.publicJwk) return;
+    const sessionId = this.sessionId;
+    void signChallenge(nonce, this.signingKey).then((signature) => {
+      const proof = {
+        protocol: 1,
+        kind: "identity",
+        sessionId,
+        publicKey: this.publicJwk as { kty: string; crv: string; x: string; y: string; alg?: string },
+        signature,
+      };
+      this.ws.send(encode(proof));
+    });
+  }
 
   private onMessage = (ev: MessageEvent): void => {
-    if (typeof ev.data === "string") {
-      const hello = JSON.parse(ev.data) as { protocol: number; serverTick: number; worldId: string; sessionId?: string };
-      if (hello.sessionId) this.sessionId = hello.sessionId;
-      this.onHello?.();
+    if (ev.type === "message" && typeof ev.data === "string") {
+      // JSON control frame (challenge / grant / kicked)
+      const msg = JSON.parse(ev.data) as Record<string, unknown>;
+      const kind = msg.kind;
+      if (kind === "challenge") {
+        const ch = msg as unknown as ChallengeMsg;
+        this.sessionId = ch.sessionId;
+        this.pendingChallenge = ch.nonce;
+        if (this.signingKey) this.answerChallenge(ch.nonce);
+        return;
+      }
+      if (kind === "session_grant") {
+        const g = msg as unknown as GrantMsg;
+        this.grant = g;
+        this.sessionId = g.sessionId;
+        this.pendingChallenge = null;
+        if (this.resolvingGrant) {
+          const resolve = this.resolvingGrant;
+          this.resolvingGrant = null;
+          this.rejectingGrant = null;
+          resolve(g);
+        }
+        return;
+      }
+      if (kind === "kicked") {
+        this.onKicked?.(String(msg.reason ?? "superseded"));
+      }
       return;
     }
+    // binary: baseline snapshot or replica batch
     const snapshot = decode(ev.data as ArrayBuffer) as unknown as SnapshotProto;
+    if (this.grant === null) {
+      // the baseline arrives right after the grant; ack it -> Ready
+      this.sendBaselineAck(snapshot.baselineId);
+    }
     this.onSnapshot?.(snapshot);
+    if (this.grant !== null && this.onReady) {
+      const once = this.onReady;
+      this.onReady = null;
+      once();
+    }
   };
 
-  private onError = (ev: Event): void => {
-    console.error("socket error", ev);
-  };
-
-  start(): void {
-    this.ws.onopen = this.onOpen;
-    this.ws.onmessage = this.onMessage;
-    this.ws.onerror = this.onError;
+  private sendBaselineAck(baselineId: number): void {
+    this.ws.send(encode({ protocol: 1, kind: "baseline_ack", baselineId }));
   }
 
-  sendMovement(cmd: {
+  /**
+   * Send a gameplay intent envelope. All M2 intents piggyback on the 30 Hz
+   * move intent (inputs, never outcomes — GDD §21.4).
+   */
+  send(cmd: {
     wishX: number;
     wishZ: number;
     jump: boolean;
@@ -57,16 +183,22 @@ export class GameSocket {
     inWater: boolean;
     yawHundredths: number;
     pitchHundredths: number;
+    swing?: { targetEntityId: string };
+    pickup?: { sourceEntityId: string };
+    drop?: { slot: number };
+    moveItem?: { from: number; to: number; equip?: "helmet" | "vest" | "pants" | "boots" };
+    heldSlot?: number;
   }): void {
-    if (this.ws.readyState !== WebSocket.OPEN) return;
+    if (this.ws.readyState !== WebSocket.OPEN || !this.grant) return;
     this.sequence += 1;
     this.clientTick += 1;
+    const command: ClientCommandProto = { kind: "move", ...cmd };
     const envelope: ClientEnvelopeProto = {
       protocol: 1,
-      sessionId: this.sessionId,
+      sessionId: this.grant.sessionId,
       sequence: this.sequence,
       clientTick: this.clientTick,
-      commands: [{ kind: "move", ...cmd }],
+      commands: [command],
     };
     this.ws.send(encode(envelope));
   }

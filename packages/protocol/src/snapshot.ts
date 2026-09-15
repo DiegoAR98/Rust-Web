@@ -27,6 +27,8 @@ export const SpawnRecordSchema = z.object({
   inventory: z.array(ItemStackSchema.nullable()).max(40).optional(),
   /** M2: the joining player's own record carries live vitals + grid */
   health: z.number().int().min(0).max(100).optional(),
+  /** M2: which player this body belongs to (lets the client find "me") */
+  playerId: z.string().min(3).max(80).optional(),
 });
 
 export const DeltaRecordSchema = z.object({
@@ -44,6 +46,10 @@ export const DeltaRecordSchema = z.object({
   respawnAtTick: z.number().int().optional(),
   /** M2: ground stack quantity changed (merge/despawn of part) */
   stack: ItemStackSchema.optional(),
+  /** M2: which player this body belongs to */
+  playerId: z.string().min(3).max(80).optional(),
+  /** M2: the owner's live inventory grid (server sends it on their own deltas) */
+  inventory: z.array(ItemStackSchema.nullable()).max(40).optional(),
 });
 
 export const EventRecordSchema = z.object({

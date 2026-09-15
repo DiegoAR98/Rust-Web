@@ -72,7 +72,11 @@ const sessionIdBySocket = new Map<WebSocket, string>();
 wss.on("connection", (ws) => {
   const { sessionId, nonce } = host.beginHandshake();
   host.attachWriter(sessionId, (data, isBinary) => {
-    if (ws.readyState === WebSocket.OPEN) ws.send(data, { binary: isBinary });
+    if (ws.readyState !== WebSocket.OPEN) return;
+    // JSON control frames must be TEXT frames; msgpack gameplay is BINARY.
+    // ws treats Buffer payloads as binary by default, so pass a string for
+    // JSON to force the text opcode (GDD §22.4 handshake).
+    ws.send(isBinary ? data : data.toString("utf8"), { binary: isBinary });
   });
   sessionIdBySocket.set(ws, sessionId);
 
