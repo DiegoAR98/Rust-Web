@@ -85,6 +85,13 @@ export const ClientCommandSchema = z.discriminatedUnion("kind", [
       .optional(),
     /** M4: rest next to a sleeping bag */
     rest: z.object({ structureEntityId: z.string().regex(/^e_[0-9a-f]{4,}$/) }).optional(),
+    /** M5: begin a food/med channel from inventory slot */
+    channel: z
+      .object({
+        slot: z.number().int().min(0).max(35),
+        kind: z.enum(["food", "bandage", "medkit", "antirad"]),
+      })
+      .optional(),
     /** hotbar slot 0..7 selection; the server derives heldItemId from it */
     heldSlot: z.number().int().min(-1).max(35).optional(),
   }),

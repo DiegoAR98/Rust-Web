@@ -182,6 +182,41 @@ describe("M2 wire records", () => {
   });
 });
 
+describe("M5 wire (channel commands, weather/radiation, animal records)", () => {
+  const base = { kind: "move", wishX: 0, wishZ: 0, jump: false, crouch: false, sprint: false, inWater: false, yawHundredths: 0, pitchHundredths: 0 };
+  const env = (commands: unknown[]) => ({ protocol: 1, sessionId: "s", sequence: 1, clientTick: 1, commands });
+
+  it("accepts all four channel kinds; rejects unknown kinds and bad slots", () => {
+    for (const k of ["food", "bandage", "medkit", "antirad"]) {
+      expect(ClientEnvelopeSchema.safeParse(env([{ ...base, channel: { slot: 3, kind: k } }])).success).toBe(true);
+    }
+    expect(ClientEnvelopeSchema.safeParse(env([{ ...base, channel: { slot: 3, kind: "laser" } }])).success).toBe(false);
+    expect(ClientEnvelopeSchema.safeParse(env([{ ...base, channel: { slot: -1, kind: "food" } }])).success).toBe(false);
+    expect(ClientEnvelopeSchema.safeParse(env([{ ...base, channel: { slot: 36, kind: "food" } }])).success).toBe(false);
+  });
+
+  it("snapshot carries weather + radiation; M5 events validate", () => {
+    const snap = {
+      protocol: 1,
+      serverTick: 0,
+      batchSequence: 0,
+      ackInputSequence: 0,
+      baselineId: 0,
+      records: [
+        { kind: "spawn", entityId: "e_abcd", kindTag: "animal", contentId: "rabbit", position: { x: 100, y: 0, z: 200 }, hp: 30, maxHp: 30 },
+        { kind: "event", event: "channel_done", payload: { playerId: "p_a", kind: "food", itemId: "chocolate_bar" } },
+        { kind: "event", entityId: "e_abcd", event: "animal_hit", payload: { playerId: "p_a", damage: 8, killed: false } },
+        { kind: "event", entityId: "e_abcd", event: "animal_death", payload: { entityId: "e_abcd" } },
+      ],
+      weather: "rain",
+      radiation: 42.5,
+    };
+    expect(SnapshotSchema.safeParse(snap).success).toBe(true);
+    expect(SnapshotSchema.safeParse({ ...snap, weather: "monsoon" }).success).toBe(false);
+    expect(SnapshotSchema.safeParse({ ...snap, radiation: 501 }).success).toBe(false);
+  });
+});
+
 describe("M3 crafting commands + records", () => {
   const base = { kind: "move", wishX: 0, wishZ: 0, jump: false, crouch: false, sprint: false, inWater: false, yawHundredths: 0, pitchHundredths: 0 };
   const env = (commands: unknown[]) => ({ protocol: 1, sessionId: "s", sequence: 1, clientTick: 1, commands });

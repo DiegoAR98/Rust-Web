@@ -8,7 +8,7 @@
  */
 import { randomBytes } from "node:crypto";
 import { createWorld, runTick, placeWorldNodes, commitDeath, type World, type TickCommand, type TickEvents } from "@dustfall/sim";
-import { EntityStore, newPlayer, type PlayerEntity, type WorldEntity, type CorpseEntity, type GroundItemEntity } from "@dustfall/sim";
+import { EntityStore, newPlayer, type PlayerEntity, type WorldEntity, type CorpseEntity, type GroundItemEntity, type AnimalEntity } from "@dustfall/sim";
 import type { PlayerId, ItemId, EntityId } from "@dustfall/contracts";
 import {
   ClientEnvelopeSchema,
@@ -192,7 +192,7 @@ export class Host {
     p.dead = true;
     const tx = commitDeath(this.world, this.store, p);
     if (tx) {
-      this.pendingEvents.push({ moved: [], died: [playerId], gathered: [], deaths: [tx], respawnedNodes: [], despawnedGround: [], inventory: [], crafted: [], researched: [], placed: [], attacked: [], destroyed: [] });
+      this.pendingEvents.push({ moved: [], died: [playerId], gathered: [], deaths: [tx], respawnedNodes: [], despawnedGround: [], inventory: [], crafted: [], researched: [], placed: [], attacked: [], destroyed: [], animalsSpawned: [], animalsDespawned: [], animalHits: [], channels: [] });
       for (const h of this.deathHooks) h();
     }
     return tx?.corpseEntityId ?? null;
@@ -295,6 +295,8 @@ export class Host {
           if (cmd.deposit) intent.deposit = cmd.deposit;
           if (cmd.withdraw) intent.withdraw = cmd.withdraw;
           if (cmd.rest) intent.rest = cmd.rest;
+          // M5 intent
+          if (cmd.channel) intent.channel = { slot: cmd.channel.slot, kind: cmd.channel.kind };
           if (cmd.heldSlot !== undefined && p) {
             intent.heldItemId = p.inventory[cmd.heldSlot]?.itemId ?? null;
           }
@@ -412,6 +414,26 @@ export class Host {
           }
         }
         this.structureSeen.set(e.id, sig);
+      } else if (e.kind === "animal") {
+        const a = e as AnimalEntity;
+        if (!this.globalSent.has(e.id)) {
+          records.push({
+            kind: "spawn",
+            entityId: e.id,
+            kindTag: "animal",
+            contentId: a.contentId,
+            position: { x: Math.round(a.position.x), y: Math.round(a.position.y), z: Math.round(a.position.z) },
+            hp: a.hp,
+            maxHp: a.maxHp,
+          });
+        } else {
+          records.push({
+            kind: "delta",
+            entityId: e.id,
+            position: { x: Math.round(a.position.x), y: Math.round(a.position.y), z: Math.round(a.position.z) },
+            hp: a.hp,
+          });
+        }
       }
       this.globalSent.add(e.id);
     }
@@ -473,6 +495,22 @@ export class Host {
         records.push({ kind: "event", entityId: did, event: "structure_destroyed", payload: { entityId: did } });
         records.push({ kind: "forget", entityId: did });
       }
+      // M5: channel completion + animal combat
+      for (const ch of ev.channels ?? []) {
+        records.push({ kind: "event", event: "channel_done", payload: { playerId: ch.playerId, kind: ch.kind, itemId: ch.itemId } });
+      }
+      for (const ah of ev.animalHits ?? []) {
+        records.push({
+          kind: "event",
+          entityId: ah.animalEntityId,
+          event: "animal_hit",
+          payload: { playerId: ah.playerId, damage: ah.damage, killed: ah.killed },
+        });
+      }
+      for (const did of ev.animalsDespawned ?? []) {
+        records.push({ kind: "event", entityId: did, event: "animal_death", payload: { entityId: did } });
+        records.push({ kind: "forget", entityId: did });
+      }
     }
 
     // the shared records are sent to every ready session, but each session's
@@ -513,6 +551,9 @@ export class Host {
         ackInputSequence: 0,
         baselineId: this.baselineId,
         records: recs,
+        // M5: world environment + the joining player's rads (own record only)
+        weather: this.world.weather,
+        radiation: own ? Math.round(own.vitals.radiation * 10) / 10 : undefined,
       };
       const payload = encode(snapshot);
       s.queuedBytes += payload.byteLength;
@@ -548,10 +589,22 @@ export class Host {
         if (isSelf) {
           rec.health = Math.round(p.vitals.health);
           rec.inventory = p.inventory;
+          rec.radiation = Math.round(p.vitals.radiation * 10) / 10;
           if (p.blueprints.length > 0) rec.blueprints = p.blueprints;
           if (p.craft) rec.handCraft = { recipeId: p.craft.recipeId, completesAtTick: p.craft.completesAtTick };
         }
         records.push(rec);
+      } else if (e.kind === "animal") {
+        const a = e as AnimalEntity;
+        records.push({
+          kind: "spawn",
+          entityId: e.id,
+          kindTag: "animal",
+          contentId: a.contentId,
+          position: { x: Math.round(a.position.x), y: Math.round(a.position.y), z: Math.round(a.position.z) },
+          hp: a.hp,
+          maxHp: a.maxHp,
+        });
       } else if (e.kind === "world") {
         const w = e as WorldEntity;
         records.push({
@@ -609,6 +662,8 @@ export class Host {
       ackInputSequence: 0,
       baselineId: this.baselineId,
       records,
+      weather: this.world.weather,
+      radiation: this.playerFor(session) ? Math.round((this.playerFor(session) as PlayerEntity).vitals.radiation * 10) / 10 : undefined,
     };
     session.baselineId = this.baselineId;
     this.batchSequence += 1;

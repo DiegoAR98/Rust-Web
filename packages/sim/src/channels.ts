@@ -11,7 +11,7 @@
  * - Medkit: heals 40 (small) / 100 (large) hp over 8 / 20 s.
  * - Anti-rad pills: remove 200 rads over 1 s (GDD §15).
  */
-import { ITEMS, TUNING, RAD_SICKNESS_THRESHOLD } from "@dustfall/content";
+import { ITEMS, RAD_SICKNESS_THRESHOLD } from "@dustfall/content";
 import { VITAL_LIMITS } from "@dustfall/contracts";
 import type { EntityStore, PlayerEntity } from "./entities.js";
 import type { World } from "./world.js";
@@ -21,8 +21,8 @@ import { reduceRadiation } from "./radiation.js";
 export type ChannelKind = "food" | "bandage" | "medkit" | "antirad";
 
 export const startChannel = (
-  world: World,
-  store: EntityStore,
+  _world: World,
+  _store: EntityStore,
   p: PlayerEntity,
   slot: number,
   kind: ChannelKind,
@@ -50,7 +50,7 @@ export const startChannel = (
   if (kind === "bandage" && def.consumable.kind !== "bandage") return { ok: false, reason: "wrong_kind" };
   if (kind === "medkit" && def.consumable.kind !== "medkit") return { ok: false, reason: "wrong_kind" };
   if (kind === "antirad" && def.consumable.kind !== "antirad") return { ok: false, reason: "wrong_kind" };
-  if ((kind === "bandage" || kind === "medkit") && world.clock.tick < p.medicalCooldownUntilTick) {
+  if ((kind === "bandage" || kind === "medkit") && _world.clock.tick < p.medicalCooldownUntilTick) {
     return { ok: false, reason: "medical_cooldown" };
   }
   p.channel = {
@@ -108,8 +108,8 @@ export const cancelChannel = (p: PlayerEntity): void => {
 };
 
 const applyChannelEffect = (
-  world: World,
-  store: EntityStore,
+  _world: World,
+  _store: EntityStore,
   p: PlayerEntity,
   kind: ChannelKind,
   itemId: string,
@@ -123,7 +123,8 @@ const applyChannelEffect = (
       if (def?.food?.healthRestore) {
         p.vitals.health = Math.min(VITAL_LIMITS.maxHealth, p.vitals.health + def.food.healthRestore);
       }
-      if (def?.food?.poisonChance > 0 && roll.nextFloat() < def.food.poisonChance) {
+      const poisonChance = def?.food?.poisonChance ?? 0;
+      if (poisonChance > 0 && roll.nextFloat() < poisonChance) {
         p.vitals.poisonedTimer = Math.max(p.vitals.poisonedTimer, 60); // 60 s
       }
       // GDD §15: food also scrubs a fixed amount of accumulated radiation
@@ -147,7 +148,6 @@ const applyChannelEffect = (
       break;
     }
   }
-  void store;
 };
 
 /** True when a channel is active (used by the client to show progress). */

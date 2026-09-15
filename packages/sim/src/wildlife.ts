@@ -13,7 +13,7 @@
  *   within reach; on death its loot table drops to the ground.
  * - Animals despawn when far from every player AND untargeted for a while.
  */
-import { ANIMALS, ANIMAL_BY_KIND, TUNING, type AnimalDef, type AnimalKind } from "@dustfall/content";
+import { ANIMALS, ANIMAL_BY_KIND, TUNING, type AnimalKind } from "@dustfall/content";
 import { Rng, SUBSYSTEM } from "./rng.js";
 import type { EntityStore, AnimalEntity, PlayerEntity } from "./entities.js";
 import type { World } from "./world.js";
@@ -44,7 +44,7 @@ export const spawnWildlife = (world: World, store: EntityStore): string[] => {
   const spawned: string[] = [];
   const toSpawn = Math.min(free, Math.max(1, Math.floor(free / 2))); // grow gradually
   for (let attempt = 0; attempt < 40 && spawned.length < toSpawn; attempt++) {
-    const anchor = players[rng.nextInt(players.length)];
+    const anchor = players[rng.nextInt(players.length)] ?? players[0]!;
     // random bearing + distance in [minD, maxD]
     const ang = rng.nextFloat() * Math.PI * 2;
     const dist = minD + rng.nextFloat() * (maxD - minD);
@@ -104,7 +104,7 @@ const makeAnimal = (world: World, store: EntityStore, kind: AnimalKind, pos: { x
   return a.id;
 };
 
-const rollWander = (world: World, store: EntityStore): { x: number; z: number } => {
+const rollWander = (world: World, _store: EntityStore): { x: number; z: number } => {
   const rng = world.rng.get(SUBSYSTEM.ai);
   if (!rng) return { x: 0, z: 0 };
   const ang = rng.nextFloat() * Math.PI * 2;

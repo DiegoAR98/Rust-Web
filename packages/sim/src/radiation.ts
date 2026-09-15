@@ -87,7 +87,7 @@ export interface RadiationStepResult {
  * Apply one tick of radiation exposure to a player. Pure: mutates the
  * player's vitals; no RNG, no store access (zones are content-authored).
  */
-export const applyRadiationTick = (world: World, p: PlayerEntity): RadiationStepResult => {
+export const applyRadiationTick = (_world: World, p: PlayerEntity): RadiationStepResult => {
   const base = doseRateAt({ x: p.position.x, z: p.position.z });
   if (base <= 0) {
     // no exposure; sickness still ticks in applyVitals if armed

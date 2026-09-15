@@ -13,7 +13,7 @@ export type ItemStackProto = z.infer<typeof ItemStackSchema>;
 export const SpawnRecordSchema = z.object({
   kind: z.literal("spawn"),
   entityId: z.string().regex(/^e_[0-9a-f]{4,}$/),
-  kindTag: z.enum(["player", "world", "corpse", "ground_item", "structure"]),
+  kindTag: z.enum(["player", "world", "corpse", "ground_item", "structure", "animal"]),
   position: z.object({ x: z.number().int(), y: z.number().int(), z: z.number().int() }),
   contentId: z.string().optional(),
   /** M2: node pool / accumulator / respawn for world entities */
@@ -44,6 +44,8 @@ export const SpawnRecordSchema = z.object({
       startedBy: z.string().min(3).max(80),
     })
     .optional(),
+  /** M5: accumulated radiation (own spawn/delta only) */
+  radiation: z.number().min(0).max(500).optional(),
   /** M3: blueprint payloads the joining player owns */
   blueprints: z.array(z.string().max(64)).max(32).optional(),
   /** M3: the joining player's in-flight hand-craft */
@@ -63,6 +65,8 @@ export const DeltaRecordSchema = z.object({
   pitchHundredths: z.number().int().optional(),
   health: z.number().int().min(0).max(100).optional(),
   calories: z.number().int().min(0).max(3000).optional(),
+  /** M5: accumulated radiation (own delta only) */
+  radiation: z.number().min(0).max(500).optional(),
   posture: z.enum(["standing", "crouching"]).optional(),
   /** M2: node pool changes (gathering payout / respawn) */
   pool: z.number().int().min(0).optional(),
@@ -119,6 +123,10 @@ export const EventRecordSchema = z.object({
     // M4 authoritative events (GDD §10, §11)
     "structure_hit",
     "structure_destroyed",
+    // M5 authoritative events (GDD §6, §12, §16)
+    "channel_done",
+    "animal_hit",
+    "animal_death",
   ]),
   payload: z.record(z.unknown()).default({}),
 });
@@ -143,6 +151,10 @@ export const SnapshotSchema = z.object({
   ackInputSequence: z.number().int().nonnegative(),
   baselineId: z.number().int().nonnegative(),
   records: z.array(ReplicaRecordSchema).max(400),
+  /** M5: world-wide environment (GDD §16) */
+  weather: z.enum(["clear", "overcast", "rain", "fog", "dry_wind"]).optional(),
+  /** M5: the joining player's accumulated radiation (rads) */
+  radiation: z.number().min(0).max(500).optional(),
 });
 export type SnapshotProto = z.infer<typeof SnapshotSchema>;
 

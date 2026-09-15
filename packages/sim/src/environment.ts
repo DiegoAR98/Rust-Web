@@ -42,8 +42,8 @@ export const applyWeather = (world: World): WeatherState => {
 
   if (world.clock.tick >= world.weatherNextChangeAtTick) {
     // pick a new state, not the one we're leaving
-    let next = WEATHER_STATES[rng.nextInt(WEATHER_STATES.length)];
-    if (next === world.weather) next = WEATHER_STATES[rng.nextInt(WEATHER_STATES.length)];
+    let next = WEATHER_STATES[rng.nextInt(WEATHER_STATES.length)] ?? "clear";
+    if (next === world.weather) next = WEATHER_STATES[rng.nextInt(WEATHER_STATES.length)] ?? "clear";
     world.weather = next;
     const minDur = TUNING["weather.duration_min_ticks"] as number;
     const maxDur = TUNING["weather.duration_max_ticks"] as number;
