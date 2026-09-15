@@ -61,6 +61,21 @@ const http = createServer((req, res) => {
     res.end(JSON.stringify({ ok: true, tick: host.world.clock.tick, players: host.sessions.size() }));
     return;
   }
+  // dev-only M2 gate hook: POST /dev/kill?sessionId=... force-commits a death
+  // transaction for that session's player (never exposed without DUSTFALL_DEV_KILL=1)
+  if (config.devKill && req.method === "POST" && req.url?.startsWith("/dev/kill")) {
+    const sid = new URL(req.url, "http://localhost").searchParams.get("sessionId");
+    const s = sid ? host.sessions.get(sid) : undefined;
+    if (!s || s.state !== "ready") {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: false, reason: "unknown_session_or_not_ready" }));
+      return;
+    }
+    const corpseId = host.devKillPlayer(s.playerId);
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ ok: corpseId !== null, playerId: s.playerId, corpseEntityId: corpseId }));
+    return;
+  }
   res.writeHead(404);
   res.end("not found");
 });

@@ -116,12 +116,45 @@ const importPrivateJwk = async (): Promise<CryptoKey | null> => {
   }
 };
 
-/** Sign the 32-byte challenge nonce; returns base64url DER (ES256). */
+/**
+ * Web Crypto ECDSA returns the signature in IEEE P1363 "raw" form
+ * (R||S, 64 bytes for P-256). The server verifies with Node's crypto, which
+ * expects DER (SEC 1). Convert raw -> DER per GDD §22.4 ("DER-encoded ES256").
+ */
+const rawToDer = (raw: Uint8Array): Uint8Array => {
+  const encInt = (start: number): number[] => {
+    let bytes: number[] = [];
+    for (let i = start; i < start + 32; i++) bytes.push(raw[i] as number);
+    // strip leading zero bytes
+    while (bytes.length > 1 && (bytes[0] as number) === 0) bytes.shift();
+    // if the high bit is set, prefix 0x00 to keep the INTEGER positive
+    if ((bytes[0] as number) & 0x80) bytes = [0, ...bytes];
+    return bytes;
+  };
+  const r = encInt(0);
+  const s = encInt(32);
+  // SEQUENCE body = [02 len R][02 len S]; its length includes both tag+len bytes
+  const bodyLen = 2 + r.length + 2 + s.length;
+  const out = [0x30, bodyLen];
+  out.push(0x02, r.length, ...r, 0x02, s.length, ...s);
+  return new Uint8Array(out);
+};
+
+/**
+ * Sign the 32-byte challenge nonce; returns base64url DER (ES256).
+ *
+ * ECDSA signature encoding differs per platform: browsers' Web Crypto
+ * returns IEEE P1363 raw form (R||S, 64 bytes) while Node's Web Crypto
+ * returns DER (first byte 0x30). The GDD §22.4 wire contract is DER, so
+ * raw is converted to DER here; DER is passed through unchanged.
+ */
 export const signChallenge = async (nonceB64url: string, key: CryptoKey): Promise<string> => {
-  const sig = await crypto.subtle.sign(
+  const raw = await crypto.subtle.sign(
     { name: "ECDSA", hash: "SHA-256" },
     key,
     fromB64url(nonceB64url) as Uint8Array<ArrayBuffer>,
   );
-  return b64url(sig);
+  const bytes = new Uint8Array(raw);
+  const der = bytes[0] === 0x30 ? bytes : rawToDer(bytes);
+  return b64url(der);
 };

@@ -7,7 +7,7 @@
  *   events forwarded with the following batch (§21.7: never dropped).
  */
 import { randomBytes } from "node:crypto";
-import { createWorld, runTick, placeWorldNodes, type World, type TickCommand, type TickEvents } from "@dustfall/sim";
+import { createWorld, runTick, placeWorldNodes, commitDeath, type World, type TickCommand, type TickEvents } from "@dustfall/sim";
 import { EntityStore, newPlayer, type PlayerEntity, type WorldEntity, type CorpseEntity, type GroundItemEntity } from "@dustfall/sim";
 import type { PlayerId, ItemId, EntityId } from "@dustfall/contracts";
 import {
@@ -168,6 +168,23 @@ export class Host {
     s.lastDisconnectAtMs = Date.now();
     s.state = "connecting"; // no more input
     this.writers.get(sessionId)?.(Buffer.from(JSON.stringify({ protocol: 1, kind: "kicked", reason: "superseded" })), false);
+  }
+
+  /**
+   * Dev-only: force-commit a death transaction for a player (M2 exit-gate
+   * smoke: "die" without starvation). Returns the corpse entity id.
+   */
+  devKillPlayer(playerId: string): string | null {
+    const p = [...this.store.values()].find((e) => e.kind === "player" && e.playerId === playerId) as PlayerEntity | undefined;
+    if (!p || p.dead) return null;
+    p.vitals.health = 0;
+    p.dead = true;
+    const tx = commitDeath(this.world, this.store, p);
+    if (tx) {
+      this.pendingEvents.push({ moved: [], died: [playerId], gathered: [], deaths: [tx], respawnedNodes: [], despawnedGround: [], inventory: [] });
+      for (const h of this.deathHooks) h();
+    }
+    return tx?.corpseEntityId ?? null;
   }
 
   /** Acknowledge the baseline -> Ready. */
@@ -331,6 +348,15 @@ export class Host {
         }
       }
       this.globalSent.add(e.id);
+    }
+
+    // entities sent before but removed from the store (corpse fully looted,
+    // ground item consumed) must be forgotten on the wire (GDD §21.7)
+    for (const id of this.globalSent) {
+      if (!this.store.has(id as import("@dustfall/contracts").EntityId)) {
+        records.push({ kind: "forget", entityId: id });
+        this.globalSent.delete(id);
+      }
     }
 
     // authoritative events since the last batch (§21.7: never dropped)

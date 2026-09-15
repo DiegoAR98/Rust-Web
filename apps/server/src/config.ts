@@ -11,6 +11,8 @@ export interface ServerConfig {
   passwordHash?: string;
   pvpEnabled: boolean;
   dataDir: string;
+  /** dev-only: expose a /dev/kill hook to force a death transaction (M2 gate) */
+  devKill: boolean;
 }
 
 export const DEFAULT_CONFIG: ServerConfig = {
@@ -20,6 +22,7 @@ export const DEFAULT_CONFIG: ServerConfig = {
   maxPlayers: 8,
   pvpEnabled: true,
   dataDir: "data",
+  devKill: false,
 };
 
 export const loadConfig = (env: NodeJS.ProcessEnv = process.env): ServerConfig => ({
@@ -28,4 +31,5 @@ export const loadConfig = (env: NodeJS.ProcessEnv = process.env): ServerConfig =
   worldSlot: env.DUSTFALL_WORLD_SLOT ?? DEFAULT_CONFIG.worldSlot,
   maxPlayers: env.DUSTFALL_MAX_PLAYERS ? Number(env.DUSTFALL_MAX_PLAYERS) : DEFAULT_CONFIG.maxPlayers,
   dataDir: env.DUSTFALL_DATA_DIR ?? DEFAULT_CONFIG.dataDir,
+  devKill: env.DUSTFALL_DEV_KILL === "1",
 });

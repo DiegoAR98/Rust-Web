@@ -37,6 +37,7 @@ export class GameSocket {
   private clientTick = 0;
   private sessionId = "";
   private pendingChallenge: string | null = null;
+  private baselineAcked = false;
   private signingKey: CryptoKey | null = null;
   private grant: GrantMsg | null = null;
   private resolvingGrant: ((g: GrantMsg) => void) | null = null;
@@ -139,6 +140,7 @@ export class GameSocket {
         this.grant = g;
         this.sessionId = g.sessionId;
         this.pendingChallenge = null;
+        this.baselineAcked = false;
         if (this.resolvingGrant) {
           const resolve = this.resolvingGrant;
           this.resolvingGrant = null;
@@ -154,8 +156,10 @@ export class GameSocket {
     }
     // binary: baseline snapshot or replica batch
     const snapshot = decode(ev.data as ArrayBuffer) as unknown as SnapshotProto;
-    if (this.grant === null) {
-      // the baseline arrives right after the grant; ack it -> Ready
+    // The grant (text frame) always arrives before the baseline (binary), so
+    // ack the baseline exactly once on the first binary frame after grant.
+    if (this.grant !== null && !this.baselineAcked) {
+      this.baselineAcked = true;
       this.sendBaselineAck(snapshot.baselineId);
     }
     this.onSnapshot?.(snapshot);

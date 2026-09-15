@@ -119,6 +119,10 @@ export class EntityStore {
     return this.byId.get(parseEntityId(id));
   }
 
+  has(id: EntityId): boolean {
+    return this.byId.has(parseEntityId(id));
+  }
+
   remove(id: EntityId): void {
     this.byId.delete(parseEntityId(id));
   }
