@@ -23,6 +23,23 @@ export interface EntitySave {
   contentId: string;
   position: Vec3;
   pool: number;
+  /**
+   * M2+ entity payload (GDD §7/§8), stored as one JSON column so further
+   * entity payloads do not need schema churn. Omitted when the entity has
+   * nothing extra to persist.
+   */
+  payload?: {
+    /** node harvest accumulator */
+    accumulator?: number;
+    /** node respawn due tick; 0 = not respawnable */
+    respawnAtTick?: number;
+    /** ground stack despawn due tick */
+    despawnAtTick?: number;
+    /** corpse contents, stable slot order */
+    inventory?: (ItemStack | null)[];
+    /** ground stack for ground_item entities */
+    stack?: ItemStack;
+  };
 }
 
 export interface WorldSave {

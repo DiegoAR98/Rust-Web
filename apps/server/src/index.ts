@@ -14,8 +14,10 @@
  * loot persist in the world); a newer identity socket invalidates the older.
  */
 import { createServer } from "node:http";
+import { join } from "node:path";
 import { WebSocketServer, WebSocket, type RawData } from "ws";
 import { decode } from "@msgpack/msgpack";
+import { WorldRepository } from "@dustfall/persistence";
 import { loadConfig, type ServerConfig } from "./config.js";
 import { Host } from "./host.js";
 import { HANDSHAKE_TIMEOUT_MS } from "./identity.js";
@@ -25,6 +27,33 @@ const config: ServerConfig = loadConfig();
 const seedA = 0x5eed;
 const seedB = 0xbadd;
 const host = new Host(`dustfall:${config.worldSlot}`, `world_${config.worldSlot}`, seedA, seedB, config.maxPlayers);
+
+// persistence (GDD §21): SQLite world in the data dir; load on boot,
+// autosave every 5 min + after death transactions, commit on clean shutdown
+const repo = new WorldRepository(join(config.dataDir, `world_${config.worldSlot}.db`));
+if (repo.hasWorld()) {
+  const doc = repo.load();
+  if (doc) {
+    host.restoreFromSave(doc);
+    console.log(`[server] restored world ${doc.worldId} at tick ${doc.clock.tick} (${doc.players.length} players, ${doc.entities.length} entities)`);
+  }
+}
+let lastSaveTick = host.world.clock.tick;
+const autosave = (): void => {
+  try {
+    repo.save(host.toSaveDocument());
+    lastSaveTick = host.world.clock.tick;
+  } catch (err) {
+    console.error("[server] autosave failed:", err);
+  }
+};
+// autosave cadence: 5 real minutes = 5 * 60 * 30 ticks (GDD §21)
+const AUTOSAVE_TICKS = 5 * 60 * 30;
+setInterval(() => {
+  if (host.world.clock.tick - lastSaveTick >= AUTOSAVE_TICKS) autosave();
+}, 5000);
+// high-impact transaction: save immediately after a death commits (GDD §21)
+host.onDeathCommitted(autosave);
 
 const http = createServer((req, res) => {
   if (req.url === "/health") {
@@ -128,7 +157,6 @@ setInterval(() => {
 }, TICK_MS);
 
 // handshake timeout (GDD §22.6: 10 s) + stale disconnected session sweep
-const staleBySocket = new Map<WebSocket, string>();
 setInterval(() => {
   const now = Date.now();
   for (const s of host.sessions.all()) {
@@ -142,14 +170,25 @@ setInterval(() => {
       }
     }
   }
-  void staleBySocket;
 }, 2000);
 
+let shuttingDown = false;
 const shutdown = (): void => {
+  if (shuttingDown) return;
+  shuttingDown = true;
   console.log("[server] shutting down gracefully");
   wss.close();
   http.close();
-  // M2: commit last tick + WAL checkpoint + save via WorldRepository here
+  // GDD §21: commit the final world, checkpoint WAL, keep 3 backups, exit
+  try {
+    const doc = host.toSaveDocument();
+    repo.save(doc);
+    repo.backup();
+    repo.close();
+    console.log(`[server] world committed at tick ${doc.clock.tick}`);
+  } catch (err) {
+    console.error("[server] final save failed:", err);
+  }
   process.exit(0);
 };
 process.on("SIGINT", shutdown);

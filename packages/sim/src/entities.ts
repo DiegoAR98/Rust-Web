@@ -101,6 +101,20 @@ export class EntityStore {
     this.byId.set(parseEntityId(e.id), e);
   }
 
+  /**
+   * Set the next allocation past the largest restored entity id. Used when
+   * loading a persisted world so freshly allocated ids never collide with
+   * stored ones (GDD §24 entity ids are globally unique).
+   */
+  setNextIdAfter(ids: readonly EntityId[]): void {
+    let max = 0;
+    for (const id of ids) {
+      const n = parseEntityId(id);
+      if (n > max) max = n;
+    }
+    this.nextId = max + 1;
+  }
+
   get(id: EntityId): Entity | undefined {
     return this.byId.get(parseEntityId(id));
   }

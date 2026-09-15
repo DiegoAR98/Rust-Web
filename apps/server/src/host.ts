@@ -47,6 +47,8 @@ export class Host {
   private readonly globalSent = new Set<string>();
   /** events awaiting forwarding (batches only fire on odd ticks; no tick's events may be dropped, §21.7) */
   private pendingEvents: TickEvents[] = [];
+  /** hooks fired when a tick commits death transactions (GDD §21: high-impact save trigger) */
+  private readonly deathHooks: Array<() => void> = [];
   /** sessions that have a live player entity */
   private readonly spawnedSessions = new Set<string>();
 
@@ -248,11 +250,20 @@ export class Host {
       session.pending.length = 0;
     }
 
-    this.pendingEvents.push(runTick(this.world, this.store, commands));
+    const events = runTick(this.world, this.store, commands);
+    this.pendingEvents.push(events);
+    if (events.deaths.length > 0) {
+      for (const h of this.deathHooks) h();
+    }
 
     const batchDue = this.world.clock.tick % 2 === 1;
     if (batchDue) this.emitReplicaBatch();
     return batchDue;
+  }
+
+  /** Register a hook fired after a tick commits one or more death transactions. */
+  onDeathCommitted(hook: () => void): void {
+    this.deathHooks.push(hook);
   }
 
   private playerFor(session: import("./session.js").Session): PlayerEntity | undefined {
@@ -510,6 +521,172 @@ export class Host {
     this.sessions.remove(sessionId);
     this.issuedTokens.delete(sessionId);
     this.writers.delete(sessionId);
+  }
+
+  // ------------------------------------------------------------------
+  // persistence bridge (GDD §21): WorldSave <-> live world
+  // ------------------------------------------------------------------
+
+  /**
+   * Serialize the live world into a WorldSave document. Called by the host
+   * persistence layer before an atomic save (autosave + clean shutdown).
+   */
+  toSaveDocument(): import("@dustfall/persistence").WorldSave {
+    const c = this.world.clock;
+    const players: import("@dustfall/persistence").PlayerSave[] = [];
+    for (const e of this.store.values()) {
+      if (e.kind !== "player") continue;
+      const p = e as PlayerEntity;
+      players.push({
+        playerId: p.playerId,
+        blueprints: [...p.blueprints],
+        inventory: p.inventory.map((s) => (s ? { ...s } : null)),
+        equipment: p.equipment,
+        position: { ...p.position },
+        vitals: p.vitals,
+        lastSeenTick: c.tick,
+      });
+    }
+    const entities: import("@dustfall/persistence").EntitySave[] = [];
+    for (const e of this.store.values()) {
+      if (e.kind === "world") {
+        const w = e as WorldEntity;
+        entities.push({
+          entityId: w.id,
+          kind: "world",
+          contentId: w.contentId,
+          position: { ...w.position },
+          pool: w.pool,
+          payload: { accumulator: w.accumulator, respawnAtTick: w.respawnAtTick },
+        });
+      } else if (e.kind === "corpse") {
+        const c2 = e as CorpseEntity;
+        entities.push({
+          entityId: c2.id,
+          kind: "corpse",
+          contentId: "corpse",
+          position: { ...c2.position },
+          pool: 0,
+          payload: { inventory: c2.inventory.map((s) => (s ? { ...s } : null)) },
+        });
+      } else if (e.kind === "ground_item") {
+        const g = e as GroundItemEntity;
+        entities.push({
+          entityId: g.id,
+          kind: "ground_item",
+          contentId: "ground_item",
+          position: { ...g.position },
+          pool: 0,
+          payload: { stack: { ...g.stack }, despawnAtTick: g.despawnAtTick },
+        });
+      }
+    }
+    return {
+      schemaVersion: 1,
+      worldId: this.world.worldId,
+      seed: `${this.world.seedA},${this.world.seedB}`,
+      serverSettings: {},
+      clock: { tick: c.tick, gameSeconds: c.gameSecondsOfDay, weather: this.world.weather, weatherSeed: this.world.seedB },
+      players,
+      entities,
+      crews: [],
+      lootState: [],
+      migrationsApplied: [],
+      lastSavedAt: new Date().toISOString(),
+    };
+  }
+
+  /**
+   * Restore a persisted world into the live store + clock. Replaces all
+   * world/corpse/ground entities; merges saved state into live player
+   * entities (matched by PlayerId) or creates dormant bodies for players
+   * that are not currently connected. Reseeds the EntityStore id counter
+   * past the largest restored id so fresh allocations never collide.
+   */
+  restoreFromSave(doc: import("@dustfall/persistence").WorldSave): void {
+    this.world.clock = {
+      tick: doc.clock.tick,
+      gameSecondsOfDay: doc.clock.gameSeconds,
+      day: Math.floor(doc.clock.tick / 108_000),
+    };
+
+    // clear non-player entities (live players stay; their state is merged)
+    for (const e of this.store.values()) {
+      if (e.kind !== "player") this.store.remove(e.id);
+    }
+    this.nodeSeen.clear();
+
+    const restoredIds: string[] = [];
+    for (const es of doc.entities) {
+      const id = es.entityId as import("@dustfall/contracts").EntityId;
+      const position = { ...es.position };
+      if (es.kind === "world") {
+        const w: WorldEntity = {
+          id,
+          kind: "world",
+          contentId: es.contentId,
+          position,
+          pool: es.pool,
+          accumulator: es.payload?.accumulator ?? 0,
+          respawnAtTick: es.payload?.respawnAtTick ?? 0,
+        };
+        this.store.insert(w);
+        this.nodeSeen.set(w.id, { pool: w.pool, accumulator: w.accumulator, respawnAtTick: w.respawnAtTick });
+        restoredIds.push(es.entityId);
+      } else if (es.kind === "corpse") {
+        const c2: CorpseEntity = {
+          id,
+          kind: "corpse",
+          position,
+          inventory: (es.payload?.inventory ?? []).map((s) => (s ? { ...s } : null)),
+        };
+        this.store.insert(c2);
+        restoredIds.push(es.entityId);
+      } else if (es.kind === "ground_item") {
+        const stack = es.payload?.stack;
+        if (!stack) continue;
+        const g: GroundItemEntity = {
+          id,
+          kind: "ground_item",
+          position,
+          stack: { ...stack },
+          despawnAtTick: es.payload?.despawnAtTick ?? 0,
+        };
+        this.store.insert(g);
+        restoredIds.push(es.entityId);
+      }
+    }
+
+    for (const ps of doc.players) {
+      const live = this.playerForPlayerId(ps.playerId);
+      if (live) {
+        live.position = { ...ps.position };
+        live.prevPosition = { ...ps.position };
+        live.vitals = ps.vitals;
+        live.blueprints = [...ps.blueprints];
+        live.equipment = ps.equipment;
+        live.inventory = ps.inventory.map((s) => (s ? { ...s } : null));
+      } else {
+        const id = this.store.allocate();
+        const p = newPlayer(id, ps.playerId as PlayerId, { ...ps.position });
+        p.vitals = ps.vitals;
+        p.blueprints = [...ps.blueprints];
+        p.equipment = ps.equipment;
+        p.inventory = ps.inventory.map((s) => (s ? { ...s } : null));
+        this.store.insert(p);
+        restoredIds.push(p.id);
+      }
+    }
+
+    this.store.setNextIdAfter(restoredIds);
+    for (const id of restoredIds) this.globalSent.add(id);
+  }
+
+  private playerForPlayerId(playerId: string): PlayerEntity | undefined {
+    for (const e of this.store.values()) {
+      if (e.kind === "player" && e.playerId === playerId) return e as PlayerEntity;
+    }
+    return undefined;
   }
 
   get maxBackpressureBytes(): number {

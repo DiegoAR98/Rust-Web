@@ -83,6 +83,16 @@ const MIGRATIONS = [
       );
     `,
   },
+  {
+    // M2: node accumulator/respawn timers, ground stacks and corpse inventories.
+    // Kept as a JSON payload column so M5+ entity payloads do not need
+    // further schema churn.
+    id: "0002_m2_entity_payload",
+    up: `
+      ALTER TABLE entities ADD COLUMN payload_json TEXT;
+      ALTER TABLE staging_entities ADD COLUMN payload_json TEXT;
+    `,
+  },
 ];
 
 export class WorldRepository {
@@ -167,7 +177,7 @@ export class WorldRepository {
         "INSERT INTO staging_player_inventory (player_id, slot, item_id, quantity, payload) VALUES (?, ?, ?, ?, ?)",
       );
       const se = this.db.prepare(
-        "INSERT INTO staging_entities (entity_id, kind, content_id, position_json, pool) VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO staging_entities (entity_id, kind, content_id, position_json, pool, payload_json) VALUES (?, ?, ?, ?, ?, ?)",
       );
 
       for (const p of doc.players) {
@@ -178,7 +188,14 @@ export class WorldRepository {
         }
       }
       for (const e of doc.entities) {
-        se.run(e.entityId, e.kind, e.contentId, JSON.stringify(e.position), e.pool);
+        se.run(
+          e.entityId,
+          e.kind,
+          e.contentId,
+          JSON.stringify(e.position),
+          e.pool,
+          e.payload ? JSON.stringify(e.payload) : null,
+        );
       }
 
       // Verify the staging tables before touching live data.
@@ -250,15 +267,19 @@ export class WorldRepository {
       });
 
     const entities: EntitySave[] = this.db
-      .prepare("SELECT entity_id, kind, content_id, position_json, pool FROM entities ORDER BY entity_id")
+      .prepare("SELECT entity_id, kind, content_id, position_json, pool, payload_json FROM entities ORDER BY entity_id")
       .all()
-      .map((r) => ({
-        entityId: String(r["entity_id"]),
-        kind: String(r["kind"]) as EntitySave["kind"],
-        contentId: String(r["content_id"]),
-        position: JSON.parse(String(r["position_json"])),
-        pool: Number(r["pool"]),
-      }));
+      .map((r) => {
+        const e: EntitySave = {
+          entityId: String(r["entity_id"]),
+          kind: String(r["kind"]) as EntitySave["kind"],
+          contentId: String(r["content_id"]),
+          position: JSON.parse(String(r["position_json"])),
+          pool: Number(r["pool"]),
+        };
+        if (r["payload_json"] != null) e.payload = JSON.parse(String(r["payload_json"]));
+        return e;
+      });
 
     return {
       schemaVersion: SCHEMA_VERSION,
