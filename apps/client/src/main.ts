@@ -508,7 +508,7 @@ const interact = (): void => {
   const myP = myEntity ? replica.players.get(myEntity) : undefined;
   if (!myP) return;
   const REACH2 = 250 * 250; // 2.5 m; the server proves actual reach
-  let best: { id: string; type: "swing" | "pickup" | "structure" | "storage" } | null = null;
+  let best: { id: string; type: "swing" | "pickup" | "structure" | "storage" | "animal" } | null = null;
   let bestD = REACH2;
   for (const n of replica.nodes.values()) {
     const d = sq(myP.x, n.x) + sq(myP.z, n.z);
@@ -531,6 +531,15 @@ const interact = (): void => {
       best = { id: g.entityId, type: "pickup" };
     }
   }
+  // M5: wild animals are swung at like nodes (the server proves reach + the
+  // animal's FSM; prey flees, hostiles retaliate).
+  for (const a of replica.animals.values()) {
+    const d = sq(myP.x, a.x) + sq(myP.z, a.z);
+    if (d < bestD) {
+      bestD = d;
+      best = { id: a.entityId, type: "animal" };
+    }
+  }
   // M4: structures — storage boxes open their UI; sleeping bags rest; everything
   // else is breached with a tool swing (server enforces the breach rule).
   for (const s of replica.structures.values()) {
@@ -549,7 +558,7 @@ const interact = (): void => {
   }
   if (!best) return;
   const f = moveFrame();
-  if (best.type === "swing") socket.send({ ...f, heldSlot, swing: { targetEntityId: best.id } });
+  if (best.type === "swing" || best.type === "animal") socket.send({ ...f, heldSlot, swing: { targetEntityId: best.id } });
   else if (best.type === "pickup") socket.send({ ...f, heldSlot, pickup: { sourceEntityId: best.id } });
   else if (best.type === "storage") openStoragePanel(best.id);
   else {
