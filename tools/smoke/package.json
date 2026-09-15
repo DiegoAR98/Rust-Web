@@ -8,7 +8,8 @@
     "two-clients": "node src/two-clients.mjs",
     "browser-load": "node src/browser-load.mjs",
     "m2-gate": "node src/m2-gate.mjs",
-    "m3-gate": "node src/m3-gate.mjs"
+    "m3-gate": "node src/m3-gate.mjs",
+    "m4-gate": "node src/m4-gate.mjs"
   },
   "dependencies": {
     "@msgpack/msgpack": "^3.0.0",

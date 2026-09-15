@@ -28,6 +28,12 @@
       #craft { position: fixed; top: 50%; right: 16px; transform: translateY(-50%); width: 300px; background: #241d16ee; border: 1px solid #4a3b28; padding: 12px; z-index: 20; display: none; max-height: 80vh; overflow-y: auto; }
       #craft h3 { margin: 0 0 10px; font-size: 14px; color: #d8b040; }
       #craft .close { float: right; background: none; border: none; color: #a89070; font-size: 16px; cursor: pointer; font-family: monospace; }
+      #storage { position: fixed; top: 50%; right: 16px; transform: translateY(-50%); width: 300px; background: #241d16ee; border: 1px solid #4a3b28; padding: 12px; z-index: 20; display: none; max-height: 80vh; overflow-y: auto; }
+      #storage h3 { margin: 0 0 10px; font-size: 14px; color: #d8b040; }
+      #storage .close { float: right; background: none; border: none; color: #a89070; font-size: 16px; cursor: pointer; font-family: monospace; }
+      #storage .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; margin-bottom: 10px; }
+      #deposit-row { display: flex; flex-wrap: wrap; gap: 4px; }
+      #deposit-row button { background: #322818; color: #d8b040; border: 1px solid #6a5030; font-family: monospace; font-size: 10px; padding: 4px 8px; cursor: pointer; }
       .rrow { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid #2a231c; font-size: 11px; }
       .rrow .iname { color: #d8c9a8; }
       .rrow .cost { color: #8a7340; font-size: 10px; }
@@ -56,9 +62,14 @@
       <div id="inv-grid"></div>
     </div>
     <div id="craft">
-      <h3>Crafting <button class="close" id="craft-close">[x]</button></h3>
+      <h3>Crafting <button class="close" id="craft-close">✕</button></h3>
       <div id="craft-list"></div>
       <div id="craftProg"></div>
+    </div>
+    <div id="storage">
+      <h3 id="storage-title">Storage <button class="close" id="storage-close">✕</button></h3>
+      <div id="storage-grid" class="grid"></div>
+      <div id="deposit-row"></div>
     </div>
     <div id="placeHint">Left-click: place here · Esc: cancel</div>
     <div id="ghost"></div>

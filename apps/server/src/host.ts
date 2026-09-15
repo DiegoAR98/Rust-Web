@@ -198,6 +198,20 @@ export class Host {
     return tx?.corpseEntityId ?? null;
   }
 
+  /**
+   * Dev-only: put `qty` copies of `itemId` into the player's first free
+   * inventory slot (M4 exit-gate smoke: build the test base without
+   * gathering the launch-spine materials). Returns the slot index or -1.
+   */
+  devGrantItem(playerId: string, itemId: string, qty: number): number {
+    const p = [...this.store.values()].find((e) => e.kind === "player" && e.playerId === playerId) as PlayerEntity | undefined;
+    if (!p || p.dead) return -1;
+    const slot = p.inventory.findIndex((s) => s === null);
+    if (slot < 0) return -1;
+    p.inventory[slot] = { itemId: itemId as import("@dustfall/contracts").ItemId, quantity: qty };
+    return slot;
+  }
+
   /** Acknowledge the baseline -> Ready. */
   ackBaseline(sessionId: string, raw: unknown): { ok: true } | { ok: false; reason: string } {
     const session = this.sessions.get(sessionId);

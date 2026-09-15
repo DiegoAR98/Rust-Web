@@ -30,7 +30,8 @@ docs/milestones     current and completed milestone briefs
 - [x] M-1B - browser/server spike: deterministic Rapier in Node (ADR-0005), node:sqlite world persistence + recovery, two-client gates (verified 2026-09-14, docs/milestones/M-1B-brief.md)
 - [x] M2 - survival loop: gathering, 36-slot inventory, death/corpse/respawn, pickup/loot/drop, ECDSA P-256 identity handshake (§22.4, ADR-0006), world autosave/load-on-boot, browser client with inventory UI (verified 2026-09-15, docs/milestones/M-2-brief.md)
 - [x] M3 - crafting: hand + station crafts (furnace/campfire/workbench), structure placement, blueprints + research, crafting UI, in-flight craft persistence (verified 2026-09-15, docs/milestones/M-3-brief.md)
-- [ ] M4+ - see GDD §25 production roadmap
+- [x] M4 - building grid, doors, storage, decay and sleeping bags (§10): wall/door/barricade pieces, melee breach (tool multiplier × 25), shared storage boxes, structure integrity + decay with owner refresh, destruction drops everything (nothing lost), two-player build+breach exit gate (verified 2026-09-15, docs/milestones/M-4-brief.md)
+- [ ] M5+ - see GDD §25 production roadmap
 
 ## Development
 
@@ -62,7 +63,17 @@ M3 exit gate (first-session arc reaches shelter, furnace and bow):
 
 ```sh
 DUSTFALL_DATA_DIR=$(mktemp -d) pnpm dev:server   # fresh world
-node tools/smoke/src/m3-gate.mjs                 # gather -> craft+place furnace -> craft+place shelter -> craft bow
+node tools/smoke/src/m3-gate.mjs                 # ~2 min: gather → build → craft
+```
+
+M4 exit gate (two players build and breach the same test base):
+
+```sh
+DUSTFALL_DATA_DIR=$(mktemp -d) DUSTFALL_DEV_KILL=1 pnpm dev:server
+node tools/smoke/src/m4-gate.mjs                 # P1 builds the base, P2 joins,
+                                                 # withdraws the shared stash,
+                                                 # places on the base, breaches
+                                                 # P1's shelter to destruction
 ```
 
 Known deviations from the GDD literal are recorded in `docs/adr/`

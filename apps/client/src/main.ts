@@ -36,6 +36,7 @@ const nodeMeshes = new Map<string, THREE.Mesh>();
 const corpseMeshes = new Map<string, THREE.Mesh>();
 const groundItemMeshes = new Map<string, THREE.Mesh>();
 const structureMeshes = new Map<string, THREE.Group>();
+const structureHealthBars = new Map<string, THREE.Mesh>();
 
 // ---- UI elements ----
 const hud = document.getElementById("hud")!;
@@ -50,6 +51,11 @@ const craftList = document.getElementById("craft-list")!;
 const craftProg = document.getElementById("craftProg")!;
 const placeHint = document.getElementById("placeHint")!;
 const ghostEl = document.getElementById("ghost")!;
+// M4: storage structure panel
+const storagePanel = document.getElementById("storage")!;
+const storagePanelTitle = document.getElementById("storage-title")!;
+const storageGrid = document.getElementById("storage-grid")!;
+const depositRow = document.getElementById("deposit-row")!;
 
 const ui = {
   inventoryOpen: false,
@@ -105,6 +111,8 @@ const bindSocket = (s: GameSocket): void => {
       if (ent) myEntity = ent;
     }
     onM3Events();
+    // M4: refresh the storage panel live (stacks + integrity change on the wire)
+    if (storagePanelFor && storagePanel.style.display !== "none") buildStoragePanel();
   };
 };
 
@@ -463,7 +471,8 @@ const placeAtCrosshair = (): void => {
   socket.send({ ...moveFrame(), heldSlot, place: { slot, position: { x: pt.x, y: 0, z: pt.z } } });
 };
 
-// ---- interact: E gathers the nearest node or loots the nearest corpse/ground item ----
+// ---- interact: E gathers the nearest node, loots corpse/ground, breaches a
+// structure, or opens a storage structure's UI (M4) ----
 const interact = (): void => {
   const now = performance.now();
   if (now - lastSwingMs < 250) return;
@@ -471,7 +480,7 @@ const interact = (): void => {
   const myP = myEntity ? replica.players.get(myEntity) : undefined;
   if (!myP) return;
   const REACH2 = 250 * 250; // 2.5 m; the server proves actual reach
-  let best: { id: string; type: "swing" | "pickup" } | null = null;
+  let best: { id: string; type: "swing" | "pickup" | "structure" | "storage" } | null = null;
   let bestD = REACH2;
   for (const n of replica.nodes.values()) {
     const d = sq(myP.x, n.x) + sq(myP.z, n.z);
@@ -494,10 +503,90 @@ const interact = (): void => {
       best = { id: g.entityId, type: "pickup" };
     }
   }
+  // M4: structures — storage boxes open their UI; sleeping bags rest; everything
+  // else is breached with a tool swing (server enforces the breach rule).
+  for (const s of replica.structures.values()) {
+    const d = sq(myP.x, s.x) + sq(myP.z, s.z);
+    if (d < bestD) {
+      bestD = d;
+      const def = ITEMS.find((i) => i.id === s.contentId);
+      if (def?.building?.storageSlots && def.building.storageSlots > 0) {
+        best = { id: s.entityId, type: "storage" };
+      } else if (def?.building?.restable) {
+        best = { id: s.entityId, type: "structure" };
+      } else {
+        best = { id: s.entityId, type: "structure" };
+      }
+    }
+  }
   if (!best) return;
   const f = moveFrame();
   if (best.type === "swing") socket.send({ ...f, heldSlot, swing: { targetEntityId: best.id } });
-  else socket.send({ ...f, heldSlot, pickup: { sourceEntityId: best.id } });
+  else if (best.type === "pickup") socket.send({ ...f, heldSlot, pickup: { sourceEntityId: best.id } });
+  else if (best.type === "storage") openStoragePanel(best.id);
+  else {
+    // M4 structures: a restable piece (sleeping bag) regenerates health next to
+    // it; everything else is breached with a tool swing (the server enforces
+    // the authored breach rule and ignores swings on explosive_only/immune).
+    const def = ITEMS.find((i) => i.id === (replica.structures.get(best.id)?.contentId ?? ""));
+    if (def?.building?.restable) socket.send({ ...f, heldSlot, rest: { structureEntityId: best.id } });
+    else socket.send({ ...f, heldSlot, swing: { targetEntityId: best.id } });
+  }
+};
+
+// ---- M4: storage structure UI (GDD §10) ----
+let storagePanelFor: string | null = null;
+const openStoragePanel = (structureEntityId: string): void => {
+  storagePanelFor = structureEntityId;
+  ui.craftOpen = false;
+  craftPanel.style.display = "none";
+  buildStoragePanel();
+  storagePanel.style.display = "block";
+  document.exitPointerLock?.();
+};
+const closeStoragePanel = (): void => {
+  storagePanelFor = null;
+  storagePanel.style.display = "none";
+};
+(document.getElementById("storage-close") as HTMLButtonElement).addEventListener("click", closeStoragePanel);
+const buildStoragePanel = (): void => {
+  const st = storagePanelFor ? replica.structures.get(storagePanelFor) : undefined;
+  if (!st) return closeStoragePanel();
+  const hpPct = st.maxHp > 0 ? Math.round((st.hp / st.maxHp) * 100) : 100;
+  storagePanelTitle.textContent = `${st.contentId.replace(/_/g, " ")} — ${Math.round(st.hp)}/${st.maxHp} (${hpPct}%)`;
+  storageGrid.innerHTML = "";
+  for (let i = 0; i < st.storage.length; i++) {
+    const s = st.storage[i];
+    const cell = document.createElement("div");
+    cell.className = "slot";
+    cell.textContent = s ? `${s.itemId.replace(/_/g, " ")} ×${s.quantity}` : "";
+    cell.addEventListener("click", () => {
+      // click: withdraw into the first free inventory slot
+      const myP = myEntity ? replica.players.get(myEntity) : undefined;
+      if (!myP?.inventory) return;
+      const free = myP.inventory.findIndex((x) => x === null || x === undefined);
+      if (free < 0) return;
+      socket.send({ ...moveFrame(), heldSlot, withdraw: { structureEntityId: st.entityId, fromSlot: i, toSlot: free } });
+    });
+    storageGrid.appendChild(cell);
+  }
+  // deposit row: one button per occupied inventory slot
+  depositRow.innerHTML = "";
+  const myP = myEntity ? replica.players.get(myEntity) : undefined;
+  if (myP?.inventory) {
+    myP.inventory.forEach((s, i) => {
+      if (!s) return;
+      const b = document.createElement("button");
+      b.className = "craft-btn";
+      b.textContent = `→ ${s.itemId.replace(/_/g, " ")} ×${s.quantity}`;
+      b.addEventListener("click", () => {
+        const freeSlot = st.storage.findIndex((x) => x === null || x === undefined);
+        if (freeSlot < 0) return;
+        socket.send({ ...moveFrame(), heldSlot, deposit: { structureEntityId: st.entityId, fromSlot: i, toSlot: freeSlot } });
+      });
+      depositRow.appendChild(b);
+    });
+  }
 };
 const sq = (a: number, b: number): number => {
   const d = a - b;
@@ -623,6 +712,8 @@ const syncMeshes = (): void => {
     groundItemMeshes.delete(id);
   }
   // M3 structures: simple colored boxes per content type + a craft-progress tint
+  // M4: integrity bar when damaged + wall/door/barricade shapes
+  const healthBars = structureHealthBars; // alias for clarity
   for (const [id, st] of replica.structures) {
     let g = structureMeshes.get(id);
     if (!g) {
@@ -636,10 +727,33 @@ const syncMeshes = (): void => {
       const mat = child.material as THREE.MeshLambertMaterial;
       mat.emissive.set(st.craft ? 0x664400 : 0x000000);
     }
+    // M4: a red integrity bar above damaged pieces
+    const frac = st.maxHp > 0 ? Math.max(0, st.hp / st.maxHp) : 1;
+    let bar = healthBars.get(id);
+    if (frac < 1 && st.hp > 0) {
+      if (!bar) {
+        bar = new THREE.Mesh(
+          new THREE.BoxGeometry(0.8, 0.08, 0.08),
+          new THREE.MeshBasicMaterial({ color: 0xc04030 }),
+        );
+        scene.add(bar);
+        healthBars.set(id, bar);
+      }
+      bar.position.set(st.x / 100, structureBaseY(st.contentId) + 1.8 + st.y / 100, st.z / 100);
+      (bar.material as THREE.MeshBasicMaterial).color.setHSL(0.0 + 0.35 * frac, 0.9, 0.5);
+      bar.scale.x = Math.max(0.05, frac);
+    } else if (bar) {
+      scene.remove(bar);
+      healthBars.delete(id);
+    }
   }
   for (const [id, g] of structureMeshes) if (!replica.structures.has(id)) {
     scene.remove(g);
     structureMeshes.delete(id);
+  }
+  for (const [id, bar] of structureHealthBars) if (!replica.structures.has(id)) {
+    scene.remove(bar);
+    structureHealthBars.delete(id);
   }
 };
 
@@ -648,6 +762,12 @@ const structureBaseY = (contentId: string | undefined): number => {
   switch (contentId) {
     case "wood_shelter":
       return 1.2;
+    case "wood_wall":
+      return 1.3;
+    case "wood_door":
+      return 1.2;
+    case "wood_barricade":
+      return 0.6;
     case "furnace":
       return 0.7;
     case "workbench":
@@ -670,6 +790,18 @@ const structureMeshFor = (contentId: string | undefined): THREE.Group => {
     case "wood_shelter":
       geo = new THREE.BoxGeometry(3, 2.4, 3);
       color = 0x8a6a40;
+      break;
+    case "wood_wall":
+      geo = new THREE.BoxGeometry(4, 2.6, 0.3);
+      color = 0x6a5030;
+      break;
+    case "wood_door":
+      geo = new THREE.BoxGeometry(1.4, 2.4, 0.2);
+      color = 0x9a7a40;
+      break;
+    case "wood_barricade":
+      geo = new THREE.BoxGeometry(2.4, 1.2, 0.4);
+      color = 0x7a6040;
       break;
     case "furnace":
       geo = new THREE.BoxGeometry(0.9, 1.4, 0.9);

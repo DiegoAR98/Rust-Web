@@ -66,6 +66,18 @@ describe("M4 structure attack (breach)", () => {
     expect(wall.hp).toBe(hp0 - 50);
   });
 
+  it("rock (multiplier 0.5) deals rounded 13 damage", () => {
+    const { world, store, p } = mk("p_rock", [
+      { itemId: "rock", quantity: 1 },
+    ]);
+    const wall = mkStructure(store, "wood_wall", "p_rock", 0, 100);
+    p.heldItemId = "rock";
+    const r = attackStructure(world, store, p, wall.id);
+    expect(r.ok).toBe(true);
+    expect(r.damage).toBe(13); // round(0.5 * 25) — must stay integral
+    expect(Number.isInteger(wall.hp)).toBe(true);
+  });
+
   it("reaches the cooldown after a valid swing", () => {
     const { world, store, p } = mk("p_c", [
       { itemId: "hatchet", quantity: 1 },

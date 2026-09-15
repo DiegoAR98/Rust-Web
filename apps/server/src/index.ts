@@ -76,6 +76,24 @@ const http = createServer((req, res) => {
     res.end(JSON.stringify({ ok: corpseId !== null, playerId: s.playerId, corpseEntityId: corpseId }));
     return;
   }
+  // dev-only M4 gate hook: POST /dev/grant?sessionId=...&item=wood_wall&qty=2
+  // drops dev items into the session player's grid (test-base builds)
+  if (config.devKill && req.method === "POST" && req.url?.startsWith("/dev/grant")) {
+    const u = new URL(req.url, "http://localhost");
+    const sid = u.searchParams.get("sessionId");
+    const item = u.searchParams.get("item");
+    const qty = Number(u.searchParams.get("qty") ?? "1");
+    const s = sid ? host.sessions.get(sid) : undefined;
+    if (!s || s.state !== "ready" || !item || !Number.isFinite(qty) || qty < 1 || qty > 36) {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: false, reason: "unknown_session_or_bad_args" }));
+      return;
+    }
+    const slot = host.devGrantItem(s.playerId, item, Math.floor(qty));
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ ok: slot >= 0, slot, playerId: s.playerId }));
+    return;
+  }
   res.writeHead(404);
   res.end("not found");
 });

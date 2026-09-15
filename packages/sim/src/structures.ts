@@ -80,7 +80,7 @@ export const attackStructure = (
   const def = ITEMS.find((i) => i.id === st.contentId);
   if (def?.building?.breach !== "melee") return fail("not_melee_breached", st.hp);
 
-  const damage = toolDef.tool.toolMultiplier * 25;
+  const damage = Math.round(toolDef.tool.toolMultiplier * 25);
   st.hp = Math.max(0, st.hp - damage);
   if (st.hp === 0) destroyStructure(world, store, st);
   return { ok: true, damage, hpAfter: st.hp, destroyed: st.hp === 0 };

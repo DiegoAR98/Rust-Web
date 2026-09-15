@@ -63,13 +63,16 @@ export interface ReplicaGround {
 
 export interface ReplicaStructure {
   entityId: string;
-  contentId: string | undefined;
   x: number;
   y: number;
   z: number;
-  ownerId: string | undefined;
-  hp: number | undefined;
-  /** active station craft, if any */
+  contentId: string;
+  ownerId: string;
+  hp: number;
+  maxHp: number;
+  /** M4: storage slots (0-length when the piece has no storage) */
+  storage: (ItemStackProto | null)[];
+  /** M3: active station craft (null = idle) */
   craft: { recipeId: string; completesAtTick: number; startedBy: string } | null;
 }
 
@@ -169,12 +172,14 @@ export class Replica {
     } else if (rec.kindTag === "structure") {
       this.structures.set(rec.entityId, {
         entityId: rec.entityId,
-        contentId: rec.contentId,
+        contentId: rec.contentId ?? "?",
         x: pos.x,
         y: pos.y,
         z: pos.z,
-        ownerId: rec.ownerId,
-        hp: rec.hp,
+        ownerId: rec.ownerId ?? "",
+        hp: rec.hp ?? 0,
+        maxHp: rec.maxHp ?? (rec.hp ?? 0),
+        storage: rec.storage ?? [],
         craft: rec.craft ?? null,
       });
     }
@@ -239,6 +244,8 @@ export class Replica {
         st.y = rec.position.y;
         st.z = rec.position.z;
       }
+      if (rec.hp !== undefined) st.hp = rec.hp;
+      if (rec.storage) st.storage = rec.storage;
       if (rec.craft) st.craft = rec.craft;
       else st.craft = null; // explicit clear when the station goes idle
       return;

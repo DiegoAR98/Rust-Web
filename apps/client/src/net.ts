@@ -197,6 +197,10 @@ export class GameSocket {
     research?: { structureEntityId: string; itemId: string };
     /** M3: place the structure item in `slot` at a quantized position */
     place?: { slot: number; position: { x: number; y: number; z: number } };
+    /** M4: deposit/withdraw stacks with a storage structure; rest at a sleeping bag */
+    deposit?: { structureEntityId: string; fromSlot: number; toSlot: number };
+    withdraw?: { structureEntityId: string; fromSlot: number; toSlot: number };
+    rest?: { structureEntityId: string };
     heldSlot?: number;
   }): void {
     if (this.ws.readyState !== WebSocket.OPEN || !this.grant) return;
