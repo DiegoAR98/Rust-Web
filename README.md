@@ -28,7 +28,8 @@ docs/milestones     current and completed milestone briefs
 - [x] M0 - monorepo, tooling, content schema (verified 2026-09-14)
 - [x] M1 - shared sim loop, player movement, camera, replica codec (verified 2026-09-14)
 - [x] M-1B - browser/server spike: deterministic Rapier in Node (ADR-0005), node:sqlite world persistence + recovery, two-client gates (verified 2026-09-14, docs/milestones/M-1B-brief.md)
-- [ ] M2+ - see GDD §25 production roadmap
+- [x] M2 - survival loop: gathering, 36-slot inventory, death/corpse/respawn, pickup/loot/drop, ECDSA P-256 identity handshake (§22.4, ADR-0006), world autosave/load-on-boot, browser client with inventory UI (verified 2026-09-15, docs/milestones/M-2-brief.md)
+- [ ] M3+ - see GDD §25 production roadmap
 
 ## Development
 
@@ -49,5 +50,13 @@ node tools/smoke/src/two-clients.mjs   # late joiner sees the first player's rep
 node tools/smoke/src/browser-load.mjs  # headless Chromium: load -> connect -> move -> replica
 ```
 
+M2 exit gate (gather, move, die, loot and reconnect without duplication):
+
+```sh
+DUSTFALL_DEV_KILL=1 pnpm dev:server   # enables the POST /dev/kill smoke hook
+node tools/smoke/src/m2-gate.mjs       # full M2 loop over the wire (handshake -> gather -> move -> die -> reconnect -> loot)
+```
+
 Known deviations from the GDD literal are recorded in `docs/adr/`
-(notably ADR-0004: 24× game clock).
+(notably ADR-0004: 24× game clock; ADR-0006: browser raw→DER ECDSA
+signatures).
