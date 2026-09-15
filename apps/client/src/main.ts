@@ -37,6 +37,7 @@ const corpseMeshes = new Map<string, THREE.Mesh>();
 const groundItemMeshes = new Map<string, THREE.Mesh>();
 const structureMeshes = new Map<string, THREE.Group>();
 const structureHealthBars = new Map<string, THREE.Mesh>();
+const animalMeshes = new Map<string, THREE.Mesh>();
 
 // ---- UI elements ----
 const hud = document.getElementById("hud")!;
@@ -125,7 +126,7 @@ const start = async (): Promise<void> => {
     hud.innerHTML =
       `Connected as ${me}<br>` +
       `<span style="color:#a89070">${grant.hasSavedPlayer ? "resumed saved character" : "new character"}</span>`;
-    notice.textContent = "Click canvas to lock pointer. E = gather/loot, Tab = inventory, C = crafting, 1-8 = hotbar, right-click slot = drop or place (structures).";
+    notice.textContent = "Click canvas to lock pointer. E = gather/loot/attack, Tab = inventory, C = crafting, 1-8 = hotbar, U = use food/med, right-click slot = drop/place/use.";
   } catch (err) {
     console.error(err);
     hud.innerHTML = "Failed to connect: " + (err instanceof Error ? err.message : String(err));
@@ -197,9 +198,28 @@ const onSlotClick = (i: number): void => {
   buildInventory();
 };
 
+// ---- M5: food/med channels (GDD §6) ----
+const channelKindFor = (itemId: string): "food" | "bandage" | "medkit" | "antirad" | null => {
+  const def = ITEMS.find((i) => i.id === itemId);
+  if (!def) return null;
+  if (def.food) return "food";
+  if (def.consumable) return def.consumable.kind;
+  return null;
+};
+const useChannelFromSlot = (slot: number): void => {
+  const stack = myEntity ? replica.players.get(myEntity)?.inventory?.[slot] : undefined;
+  if (!stack) return;
+  const kind = channelKindFor(stack.itemId);
+  if (!kind) return;
+  socket.send({ ...moveFrame(), heldSlot, channel: { slot, kind } });
+  flashNotice(`Using ${label(stack.itemId)}…`);
+};
+
 const onSlotRightClick = (i: number): void => {
   const stack = myEntity ? replica.players.get(myEntity)?.inventory?.[i] ?? null : null;
-  if (stack) socket.send({ ...moveFrame(), heldSlot, drop: { slot: i } });
+  if (!stack) return;
+  if (channelKindFor(stack.itemId)) useChannelFromSlot(i); // M5: use food/med
+  else socket.send({ ...moveFrame(), heldSlot, drop: { slot: i } });
   buildInventory();
 };
 
@@ -219,6 +239,7 @@ const buildHotbar = (): void => {
       e.preventDefault();
       const def = ITEMS.find((it) => it.id === (s?.itemId ?? ""));
       if (def && (def.category === "building" || def.category === "deployable")) beginPlacement(i);
+      else if (s && channelKindFor(s.itemId)) useChannelFromSlot(i); // M5: use food/med
       else if (s) socket.send({ ...moveFrame(), heldSlot, drop: { slot: i } });
     });
     hotbar.appendChild(c);
@@ -389,6 +410,13 @@ const onM3Events = (): void => {
       msg = bp?.sourceItemId ? `Blueprint learned: ${itemName(bp.sourceItemId)}` : "Blueprint learned";
     } else if (ev.event === "build") {
       refresh = true; // structure spawn arrives with the same batch
+    } else if (ev.event === "channel_done" && pid && ev.payload.playerId === pid) {
+      // food/med channel completed: inventory delta is in the same batch
+      msg = `${itemName(String(ev.payload.itemId ?? ""))} used`;
+    } else if (ev.event === "animal_hit" && pid && ev.payload.playerId === pid) {
+      if (ev.payload.killed === true) msg = "Prey killed — loot dropped";
+    } else if (ev.event === "structure_destroyed") {
+      msg = "Structure destroyed";
     }
   }
   if (msg) flashNotice(msg);
@@ -608,6 +636,7 @@ window.addEventListener("keydown", (e) => {
   }
   if ((e.key === "e" || e.key === "E" || e.key === "f" || e.key === "F") && !ui.dead && !ui.inventoryOpen) interact();
   if ((e.key === "c" || e.key === "C") && !ui.dead) toggleCraftPanel();
+  if ((e.key === "u" || e.key === "U") && !ui.dead) useChannelFromSlot(heldSlot); // M5: use held food/med
   if (e.key === "Escape" && ui.placing) cancelPlacement();
 });
 window.addEventListener("keyup", (e) => keys.delete(e.code));
@@ -710,6 +739,29 @@ const syncMeshes = (): void => {
   for (const [id, m] of groundItemMeshes) if (!replica.ground.has(id)) {
     scene.remove(m);
     groundItemMeshes.delete(id);
+  }
+  // M5 animals: low-poly stand-ins per kind
+  const ANIMAL_COLORS: Record<string, number> = {
+    rabbit: 0xb0a080,
+    chicken: 0xd0d0d0,
+    deer: 0x8a5a2a,
+    wolf: 0x5a5a60,
+  };
+  for (const [id, a] of replica.animals) {
+    let m = animalMeshes.get(id);
+    if (!m) {
+      m = new THREE.Mesh(
+        new THREE.BoxGeometry(0.5, 0.5, 0.9),
+        new THREE.MeshLambertMaterial({ color: ANIMAL_COLORS[a.contentId] ?? 0x888888 }),
+      );
+      scene.add(m);
+      animalMeshes.set(id, m);
+    }
+    m.position.set(a.x / 100, 0.35 + a.y / 100, a.z / 100);
+  }
+  for (const [id, m] of animalMeshes) if (!replica.animals.has(id)) {
+    scene.remove(m);
+    animalMeshes.delete(id);
   }
   // M3 structures: simple colored boxes per content type + a craft-progress tint
   // M4: integrity bar when damaged + wall/door/barricade shapes
@@ -854,11 +906,14 @@ renderer.setAnimationLoop(() => {
 
     const hp = mine.health;
     const cal = mine.calories;
+    const rads = replica.radiation;
     const heldStack = mine.inventory?.[heldSlot];
+    const weatherLabel: Record<string, string> = { clear: "clear", overcast: "overcast", rain: "rain", fog: "fog", dry_wind: "dry wind" };
     hud.innerHTML =
-      `tick ${replica.serverTick} | pos ${s.x.toFixed(1)},${s.y.toFixed(1)},${s.z.toFixed(1)}<br>` +
+      `tick ${replica.serverTick} | ${weatherLabel[replica.weather] ?? replica.weather} | pos ${s.x.toFixed(1)},${s.y.toFixed(1)},${s.z.toFixed(1)}<br>` +
       `health <span class="bar"><div style="width:${hp}%;background:#a33"></div></span> ${Math.round(hp)}<br>` +
       `calories <span class="bar"><div style="width:${(cal / 3000) * 100}%;background:#b98"></div></span> ${Math.round(cal)}<br>` +
+      `radiation <span class="bar"><div style="width:${(rads / 500) * 100}%;background:${rads >= 400 ? "#f30" : rads >= 200 ? "#c80" : "#093"}"></div></span> ${rads.toFixed(0)}/500<br>` +
       (heldStack ? `held: ${label(heldStack.itemId)} x${heldStack.quantity}` : "held: —");
   }
 

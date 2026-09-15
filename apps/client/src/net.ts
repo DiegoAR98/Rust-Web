@@ -201,6 +201,8 @@ export class GameSocket {
     deposit?: { structureEntityId: string; fromSlot: number; toSlot: number };
     withdraw?: { structureEntityId: string; fromSlot: number; toSlot: number };
     rest?: { structureEntityId: string };
+    /** M5: start a food/med channel from a grid slot */
+    channel?: { slot: number; kind: "food" | "bandage" | "medkit" | "antirad" };
     heldSlot?: number;
   }): void {
     if (this.ws.readyState !== WebSocket.OPEN || !this.grant) return;

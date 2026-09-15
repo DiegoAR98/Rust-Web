@@ -29,6 +29,8 @@ export interface ReplicaPlayer {
   blueprints?: string[];
   /** M3: in-flight hand-craft (own deltas only) */
   handCraft: { recipeId: string; completesAtTick: number } | null;
+  /** M5: accumulated radiation (own deltas only) */
+  radiation: number;
 }
 
 export interface ReplicaNode {
@@ -49,6 +51,16 @@ export interface ReplicaCorpse {
   z: number;
   /** total items inside */
   itemCount: number;
+}
+
+export interface ReplicaAnimal {
+  entityId: string;
+  x: number;
+  y: number;
+  z: number;
+  contentId: string;
+  hp: number;
+  maxHp: number;
 }
 
 export interface ReplicaGround {
@@ -88,9 +100,14 @@ export class Replica {
   readonly corpses = new Map<string, ReplicaCorpse>();
   readonly ground = new Map<string, ReplicaGround>();
   readonly structures = new Map<string, ReplicaStructure>();
+  readonly animals = new Map<string, ReplicaAnimal>();
   /** events since the last time the UI drained them */
   private pendingEvents: ReplicaEvent[] = [];
   serverTick = 0;
+  /** M5: world-wide environment */
+  weather: "clear" | "overcast" | "rain" | "fog" | "dry_wind" = "clear";
+  /** M5: the local player's accumulated radiation */
+  radiation = 0;
 
   /** entity id of the player body for a given playerId */
   entityForPlayer(playerId: string): string | undefined {
@@ -106,6 +123,8 @@ export class Replica {
 
   apply(snapshot: SnapshotProto): void {
     this.serverTick = snapshot.serverTick;
+    if (snapshot.weather) this.weather = snapshot.weather;
+    if (snapshot.radiation !== undefined) this.radiation = snapshot.radiation;
     for (const rec of snapshot.records) {
       if (rec.kind === "spawn") {
         this.applySpawn(rec);
@@ -119,6 +138,7 @@ export class Replica {
         this.corpses.delete(rec.entityId);
         this.ground.delete(rec.entityId);
         this.structures.delete(rec.entityId);
+        this.animals.delete(rec.entityId);
       }
     }
   }
@@ -139,6 +159,17 @@ export class Replica {
         calories: prev?.calories ?? 1500,
         posture: prev?.posture ?? "standing",
         handCraft: rec.handCraft ?? null,
+        radiation: rec.radiation ?? 0,
+      });
+    } else if (rec.kindTag === "animal") {
+      this.animals.set(rec.entityId, {
+        entityId: rec.entityId,
+        contentId: rec.contentId ?? "animal",
+        x: pos.x,
+        y: pos.y,
+        z: pos.z,
+        hp: rec.hp ?? 1,
+        maxHp: rec.maxHp ?? 1,
       });
     } else if (rec.kindTag === "world") {
       this.nodes.set(rec.entityId, {
@@ -203,6 +234,10 @@ export class Replica {
       if (rec.blueprints) p.blueprints = rec.blueprints;
       if (rec.handCraft) p.handCraft = rec.handCraft;
       else p.handCraft = null; // explicit clear when the craft finishes
+      if (rec.radiation !== undefined) {
+        p.radiation = rec.radiation;
+        this.radiation = rec.radiation; // own delta carries the local player's rads
+      }
       return;
     }
     const node = this.nodes.get(rec.entityId);
@@ -235,6 +270,16 @@ export class Replica {
         g.itemId = rec.stack.itemId;
         g.quantity = rec.stack.quantity;
       }
+      return;
+    }
+    const an = this.animals.get(rec.entityId);
+    if (an) {
+      if (rec.position) {
+        an.x = rec.position.x;
+        an.y = rec.position.y;
+        an.z = rec.position.z;
+      }
+      if (rec.hp !== undefined) an.hp = rec.hp;
       return;
     }
     const st = this.structures.get(rec.entityId);
