@@ -46,6 +46,10 @@ export const ITEMS: readonly ItemDef[] = [
   { id: "cooked_rabbit_meat", category: "food", stackMax: 100, food: { calories: 100, healthRestore: 0, poisonChance: 0 } },
   { id: "raw_chicken_meat", category: "food", stackMax: 100, despawnSeconds: 300, food: { calories: 80, healthRestore: 0, poisonChance: 0.3 } },
   { id: "cooked_chicken_meat", category: "food", stackMax: 100, food: { calories: 80, healthRestore: 0, poisonChance: 0 } },
+  { id: "raw_venison", category: "food", stackMax: 100, despawnSeconds: 300, food: { calories: 200, healthRestore: 0, poisonChance: 0.3 } },
+  { id: "cooked_venison", category: "food", stackMax: 100, food: { calories: 200, healthRestore: 0, poisonChance: 0 } },
+  { id: "raw_wolf_meat", category: "food", stackMax: 100, despawnSeconds: 300, food: { calories: 150, healthRestore: 0, poisonChance: 0.3 } },
+  { id: "cooked_wolf_meat", category: "food", stackMax: 100, food: { calories: 150, healthRestore: 0, poisonChance: 0 } },
   { id: "chocolate_bar", category: "food", stackMax: 50, food: { calories: 300, healthRestore: 0, poisonChance: 0 } },
   { id: "water_bottle", category: "food", stackMax: 10, food: { calories: 0, healthRestore: 0, poisonChance: 0 } },
   // ---- medical ----
@@ -58,6 +62,9 @@ export const ITEMS: readonly ItemDef[] = [
   { id: "cloth_vest", category: "armor", stackMax: 1, armor: { slot: "vest", damageReduction: 0.1, warmth: 4, radiationProtection: 0 } },
   { id: "cloth_pants", category: "armor", stackMax: 1, armor: { slot: "pants", damageReduction: 0.05, warmth: 4, radiationProtection: 0 } },
   { id: "cloth_boots", category: "armor", stackMax: 1, armor: { slot: "boots", damageReduction: 0.05, warmth: 3, radiationProtection: 0 } },
+  // M5: Rad Suit — full-body protection, blocks 90% of the incoming dose (GDD §6 T04).
+  // High-tier loot item; obtained from containers/airdrops, not crafted.
+  { id: "rad_suit", category: "armor", stackMax: 1, armor: { slot: "vest", damageReduction: 0.1, warmth: 4, radiationProtection: 0.9 } },
   // ---- research ----
   { id: "research_kit", category: "misc", stackMax: 5 },
   // ---- building & deployables (M4: full grid rules) ----

@@ -36,6 +36,8 @@ export interface World {
   seedB: number;
   clock: WorldClock;
   weather: WeatherState;
+  /** M5: tick at which the next weather change may happen (weather FSM) */
+  weatherNextChangeAtTick: number;
   rng: Map<SubsystemId, Rng>;
 }
 
@@ -45,6 +47,7 @@ export const createWorld = (worldId: string, seedA: number, seedB: number): Worl
   seedB: seedB >>> 0,
   clock: { tick: 0, gameSecondsOfDay: 0, day: 0 },
   weather: "clear",
+  weatherNextChangeAtTick: Number.MAX_SAFE_INTEGER, // first tick of applyWeather arms it
   rng: new Map<SubsystemId, Rng>([
     [SUBSYSTEM.world, Rng.derive(seedA, seedB, SUBSYSTEM.world)],
     [SUBSYSTEM.loot, Rng.derive(seedA, seedB, SUBSYSTEM.loot)],

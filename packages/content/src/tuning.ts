@@ -58,4 +58,25 @@ export const TUNING: TuningDef = {
   "raid.max_loot_seconds": 480,
   "raid.stage_line_distance": 80,
   "raid.approach_distance": 1.5,
+  // M5: radiation — dose rates are authored in content/schemas.ts
+  // (RAD_DOSE_RATES); these shape sickness + treatment.
+  "radiation.sickness_hp_drain_per_second": 0.5, // escalating loss while sick
+  "radiation.sickness_threshold": 500, // rads at which sickness becomes lethal
+  "radiation.pill_remove": 200, // Anti-Radiation Pills flat-removal (GDD §6)
+  // M5: cold (GDD §6) — coldPressure = regionBase + altitude + night + weather
+  "cold.region_base_pressure": 0, // flat baseline cold pressure (per-tick pressure unit)
+  "cold.night_pressure": 4, // added at night
+  "cold.weather_rain_pressure": 4, // rain chills
+  "cold.weather_fog_pressure": 2,
+  "cold.campfire_comfort_radius_m": 6, // within a campfire with zero deficit -> comfort
+  "cold.campfire_warmth": 30, // warmth granted by proximity to a campfire
+  // M5: weather (GDD §16) — seeded state changes with a min clear interval
+  "weather.change_min_clear_ticks": 5400, // 3 game-min: min time between weather events
+  "weather.duration_min_ticks": 3600, // 2 game-min: min a state persists
+  "weather.duration_max_ticks": 14400, // 8 game-min: max a state persists
+  // M5: wildlife (GDD §12) — spawn/despawn distances and active cap
+  "animal.spawn_min_players_m": 20, // never spawn within this of a player
+  "animal.spawn_max_players_m": 60, // prefer to spawn within this of a player
+  "animal.active_cap": 8, // no more than eight animals active at once
+  "animal.despawn_idle_seconds": 420, // 7 real-min: despawn when far + untargeted
 };

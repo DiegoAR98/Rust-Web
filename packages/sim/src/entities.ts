@@ -45,6 +45,19 @@ export interface PlayerEntity {
     /** tick the craft completes at */
     completesAtTick: number;
   } | null;
+  /** M5: in-flight channel (eating / bandage / medkit / antirad, GDD §6) */
+  channel: {
+    kind: "food" | "bandage" | "medkit" | "antirad";
+    itemId: string;
+    /** ticks left in the channel */
+    ticksRemaining: number;
+    /** total channel length (for fractional application) */
+    totalTicks: number;
+    /** effect amount (calories, hp, or rads removed) */
+    amount: number;
+  } | null;
+  /** M5: shared 4 s medical cooldown (GDD §6: prevents bandage/medkit spam) */
+  medicalCooldownUntilTick: number;
   /** true while a death transaction is in flight */
   dead: boolean;
   /** ticks since last tick the player was alive */
@@ -113,11 +126,60 @@ export interface StructureEntity {
   maxHp: number;
   /** M4: storage structure contents (0-length when the piece has no slots) */
   storage: (ItemStack | null)[];
-  /** M4: last tick the owner was within decay.owner_refresh_m (GDD §10) */
+/** M4: last tick the owner was within decay.owner_refresh_m (GDD §10) */
   lastMaintainedAtTick: number;
 }
 
-export type Entity = PlayerEntity | WorldEntity | CorpseEntity | GroundItemEntity | StructureEntity;
+/**
+ * M5: a living animal (GDD §12). Simple FSM: idle -> flee (prey) or
+ * attack (hostile) when a player is within aggroRangeM; calm at
+ * calmRangeM. Death drops its loot table to the ground.
+ */
+export interface AnimalEntity {
+  id: EntityId;
+  kind: "animal";
+  /** content animal kind (rabbit | chicken | deer | wolf | ...) */
+  contentId: string;
+  position: Vec3;
+  hp: number;
+  maxHp: number;
+  /** "idle" | "flee" | "attack" */
+  state: "idle" | "flee" | "attack";
+  /** last tick a player was within aggro range (idle/timeout bookkeeping) */
+  lastAggroTick: number;
+  /** wander direction in cm (re-rolled when idle) */
+  wander: { x: number; z: number };
+  /** spawn point: animals return when they calm down */
+  home: Vec3;
+  /** true when this tick's damage killed it (loot drops this tick) */
+  dying: boolean;
+}
+
+/**
+ * M5: a loot container (crate, barrel — GDD §15). Server-owned, fixed
+ * seeded loot table; lootable like a ground item within 2 m. Refills on a
+ * timer but not while a player is looting (M8).
+ */
+export interface ContainerEntity {
+  id: EntityId;
+  kind: "container";
+  /** content crate id (crate_wood | crate_medical | ...) */
+  contentId: string;
+  position: Vec3;
+  /** loot slots (null = empty) */
+  inventory: (ItemStack | null)[];
+  /** refill timer: tick to re-roll the loot table */
+  refillAtTick: number;
+}
+
+export type Entity =
+  | PlayerEntity
+  | WorldEntity
+  | CorpseEntity
+  | GroundItemEntity
+  | StructureEntity
+  | AnimalEntity
+  | ContainerEntity;
 
 /**
  * Entity store with deterministic ascending-EntityId iteration.
@@ -207,6 +269,8 @@ export const newPlayer = (
   equipment: {},
   blueprints: [],
   craft: null,
+  channel: null,
+  medicalCooldownUntilTick: 0,
   dead: false,
   deadTicks: 0,
 });

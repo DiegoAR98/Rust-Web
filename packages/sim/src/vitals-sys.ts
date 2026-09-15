@@ -14,6 +14,7 @@ export const applyVitals = (p: PlayerEntity, moving: boolean, sprinting: boolean
   const coldHp = TUNING["survival.cold_hp_per_second"] as number;
   const healRate = TUNING["survival.heal_rate_per_second"] as number;
   const comfortHeal = TUNING["survival.comfort_heal_rate_per_second"] as number;
+  const radSick = TUNING["radiation.sickness_hp_drain_per_second"] as number;
 
   let drain: number;
   if (sprinting) drain = sprintDrain;
@@ -44,7 +45,7 @@ export const applyVitals = (p: PlayerEntity, moving: boolean, sprinting: boolean
   if (p.vitals.poisonedTimer > 0) p.vitals.poisonedTimer = Math.max(0, p.vitals.poisonedTimer - SECONDS_PER_TICK);
   if (p.vitals.radiationSicknessTimer > 0) {
     p.vitals.radiationSicknessTimer = Math.max(0, p.vitals.radiationSicknessTimer - SECONDS_PER_TICK);
-    p.vitals.health -= 0.5 * SECONDS_PER_TICK;
+    p.vitals.health -= radSick * SECONDS_PER_TICK;
   }
   if (p.vitals.comfortTimer > 0) p.vitals.comfortTimer = Math.max(0, p.vitals.comfortTimer - SECONDS_PER_TICK);
 

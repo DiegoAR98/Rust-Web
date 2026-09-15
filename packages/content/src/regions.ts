@@ -60,6 +60,24 @@ export const RADIATION_ZONES: readonly RadiationZoneDef[] = [
     coreRadiusM: 25,
     center: { x: 250, y: 0, z: -250 },
   },
+  {
+    // M5: High band — needed for acceptance test T03 (High core naked = 5.0 rads/s).
+    id: "region_ashfield_rad",
+    band: "high",
+    rimRadiusM: 90,
+    midRadiusM: 50,
+    coreRadiusM: 20,
+    center: { x: -50, y: 0, z: -150 },
+  },
+  {
+    // M5: a second low band for the northern basin edge.
+    id: "region_north_rim",
+    band: "low",
+    rimRadiusM: 80,
+    midRadiusM: 45,
+    coreRadiusM: 18,
+    center: { x: 150, y: 0, z: 250 },
+  },
 ];
 
 export const TICK_HZ = 30;

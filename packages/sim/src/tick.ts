@@ -26,6 +26,7 @@
 import { advanceClock } from "./world.js";
 import { applyMovement, type MovementIntent } from "./movement.js";
 import { applyVitals } from "./vitals-sys.js";
+import { ITEMS } from "@dustfall/content";
 import { resolveSwing, applyNodeRespawns, type SwingResult } from "./gathering.js";
 import { commitDeath, type DeathTransaction } from "./death.js";
 import { loot, dropToGround, applyGroundDespawn } from "./pickup.js";
@@ -38,6 +39,10 @@ import {
   restAtStructure,
   applyStructureDecay,
 } from "./structures.js";
+import { applyRadiation } from "./radiation.js";
+import { applyWeather, applyCold } from "./environment.js";
+import { startChannel, advanceChannels, cancelChannel } from "./channels.js";
+import { spawnWildlife, advanceWildlife, hitAnimal } from "./wildlife.js";
 import type { EntityStore, PlayerEntity } from "./entities.js";
 import type { World } from "./world.js";
 import type { Vec3 } from "@dustfall/contracts";
@@ -65,6 +70,8 @@ export interface TickCommand {
   withdraw?: { structureEntityId: string; fromSlot: number; toSlot: number };
   /** M4: rest next to a sleeping bag (health regen; full sleep = M5) */
   rest?: { structureEntityId: string };
+  /** M5: start a food / med channel from a grid slot */
+  channel?: { slot: number; kind: "food" | "bandage" | "medkit" | "antirad" };
   heldItemId?: string | null;
 }
 
@@ -116,6 +123,23 @@ export interface TickEvents {
   }>;
   /** M4: structures destroyed this tick (breach OR decay) */
   destroyed: string[];
+  /** M5: animals spawned this tick (ids) */
+  animalsSpawned: string[];
+  /** M5: animals despawned this tick (ids) */
+  animalsDespawned: string[];
+  /** M5: animal melee hits */
+  animalHits: Array<{
+    playerId: string;
+    animalEntityId: string;
+    damage: number;
+    killed: boolean;
+  }>;
+  /** M5: channels that completed this tick */
+  channels: Array<{
+    playerId: string;
+    kind: "food" | "bandage" | "medkit" | "antirad";
+    itemId: string;
+  }>;
 }
 
 /**
@@ -128,7 +152,7 @@ export const runTick = (world: World, store: EntityStore, commands: TickCommand[
     return a.sequence - b.sequence;
   });
 
-  const events: TickEvents = { moved: [], died: [], gathered: [], deaths: [], respawnedNodes: [], despawnedGround: [], inventory: [], crafted: [], researched: [], placed: [], attacked: [], destroyed: [] };
+  const events: TickEvents = { moved: [], died: [], gathered: [], deaths: [], respawnedNodes: [], despawnedGround: [], inventory: [], crafted: [], researched: [], placed: [], attacked: [], destroyed: [], animalsSpawned: [], animalsDespawned: [], animalHits: [], channels: [] };
 
   // group by player; the last command is the authoritative movement frame
   const byPlayer = new Map<string, TickCommand[]>();
@@ -151,6 +175,10 @@ export const runTick = (world: World, store: EntityStore, commands: TickCommand[
     for (const cmd of cmds ?? []) {
       last = cmd;
       if (cmd.swing) {
+        // M5: firing a swing cancels an active channel (GDD §6)
+        if (p.channel) {
+          cancelChannel(p);
+        }
         // M4: a swing may target a structure (breach) as well as a node
         const swingTarget = store.get(cmd.swing.targetEntityId as import("@dustfall/contracts").EntityId);
         if (swingTarget && swingTarget.kind === "structure") {
@@ -164,6 +192,20 @@ export const runTick = (world: World, store: EntityStore, commands: TickCommand[
               destroyed: ar.destroyed,
             });
             if (ar.destroyed) events.destroyed.push(cmd.swing.targetEntityId);
+          }
+        } else if (swingTarget && swingTarget.kind === "animal") {
+          // M5: melee a wild animal with the held tool
+          const held = p.heldItemId ? p.inventory.find((s) => s !== null && s !== undefined && s.itemId === p.heldItemId) : undefined;
+          const toolDef = held ? ITEMS.find((i) => i.id === held.itemId) : undefined;
+          const mult = toolDef?.tool?.toolMultiplier ?? 0.5; // bare hands
+          const hr = hitAnimal(world, store, p, cmd.swing.targetEntityId, mult);
+          if (hr.ok) {
+            events.animalHits.push({
+              playerId: p.playerId,
+              animalEntityId: cmd.swing.targetEntityId,
+              damage: hr.damage,
+              killed: hr.killed,
+            });
           }
         } else {
           const r: SwingResult = resolveSwing(world, store, p, cmd.swing.targetEntityId);
@@ -257,6 +299,12 @@ export const runTick = (world: World, store: EntityStore, commands: TickCommand[
       if (cmd.rest) {
         restAtStructure(world, store, p, cmd.rest.structureEntityId);
       }
+      if (cmd.channel) {
+        const cr = startChannel(world, store, p, cmd.channel.slot, cmd.channel.kind);
+        if (!cr.ok && process.env.DUSTFALL_DEBUG) {
+          console.error(`[channel:reject] ${p.playerId} slot=${cmd.channel.slot} kind=${cmd.channel.kind}: ${cr.reason}`);
+        }
+      }
     }
     if (last?.heldItemId !== undefined) p.heldItemId = (last.heldItemId ?? null) as PlayerEntity["heldItemId"];
 
@@ -273,6 +321,7 @@ export const runTick = (world: World, store: EntityStore, commands: TickCommand[
     // 7. survival: every live player, whether or not they sent input
     const moving = Math.abs(p.position.x - p.prevPosition.x) > 0 || Math.abs(p.position.z - p.prevPosition.z) > 0;
     const sprinting = byPlayer.get(p.playerId)?.at(-1)?.intent.sprint === true && moving;
+    if (sprinting && p.channel) cancelChannel(p); // sprinting cancels (GDD §6)
     applyVitals(p, moving, sprinting);
     p.prevPosition = { ...p.position };
 
@@ -289,6 +338,9 @@ export const runTick = (world: World, store: EntityStore, commands: TickCommand[
   // 7. ground stack despawn (GDD §8: catalog timer)
   events.despawnedGround.push(...applyGroundDespawn(world, store));
 
+  // 7d. M5: advance food/med channels (may complete this tick)
+  events.channels.push(...advanceChannels(world, store));
+
   // 12. advance tick exactly once
   advanceClock(world);
 
@@ -300,6 +352,15 @@ export const runTick = (world: World, store: EntityStore, commands: TickCommand[
   // 7c. M4: unattended structure decay (GDD §10). Runs after the clock so
   //     lastMaintainedAtTick < tick means "a full decay window elapsed".
   events.destroyed.push(...applyStructureDecay(world, store));
+
+  // 7e. M5: radiation (position-based, GDD §15) + weather FSM + cold (§16)
+  applyRadiation(world, store);
+  applyWeather(world);
+  applyCold(world, store);
+
+  // 7f. M5: wildlife spawn + advance (GDD §12)
+  events.animalsSpawned.push(...spawnWildlife(world, store));
+  events.animalsDespawned.push(...advanceWildlife(world, store));
 
   return events;
 };

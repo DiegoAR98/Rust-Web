@@ -149,6 +149,53 @@ export const radiationZoneSchema = z.object({
 });
 export type RadiationZoneDef = z.infer<typeof radiationZoneSchema>;
 
+/**
+ * GDD §6: dose rates per band, rim/mid/core ring, in rads per REAL second
+ * (the acceptance suite T03/T04 is specified in real seconds). Dose rates
+ * are never summed across overlaps — the highest current ring wins.
+ */
+export const RAD_DOSE_RATES = {
+  low: { rim: 0.5, mid: 1.0, core: 2.0 },
+  high: { rim: 1.5, mid: 3.0, core: 5.0 },
+  extreme: { rim: 12.0, mid: 24.0, core: 40.0 },
+} as const;
+export type RadBand = keyof typeof RAD_DOSE_RATES;
+/** GDD §6: a full Rad Suit blocks 90% of the dose. */
+export const RAD_SUIT_PROTECTION = 0.9;
+/** GDD §6: at 500 rads, radiation sickness becomes lethal without treatment. */
+export const RAD_SICKNESS_THRESHOLD = 500;
+
+/**
+ * M5: wildlife (GDD §12, Appendix E). The vertical slice seeds the three
+ * prey plus the wolf; bear/boar/red variants join with the full AI in M7.
+ * Dispositions: prey flees, hostile chases + attacks.
+ */
+export const animalKindSchema = z.enum(["rabbit", "chicken", "deer", "wolf", "boar", "bear", "red_wolf", "red_bear"]);
+export type AnimalKind = z.infer<typeof animalKindSchema>;
+
+export const animalSchema = z.object({
+  kind: animalKindSchema,
+  hp: z.number().int().positive(),
+  /** cm/s ground speed */
+  speedCmS: z.number().positive(),
+  disposition: z.enum(["prey", "hostile"]),
+  /** m: notice/flee (prey) or aggro (hostile) range */
+  aggroRangeM: z.number().positive(),
+  /** m: stop and idle / lose interest */
+  calmRangeM: z.number().positive(),
+  /** loot: item -> chance 0..1, rolled on the loot stream */
+  loot: z.array(z.object({ itemId: z.string().min(1), chance: z.number().min(0).max(1) })).default([]),
+});
+export type AnimalDef = z.infer<typeof animalSchema>;
+
+export const ANIMALS: readonly AnimalDef[] = [
+  { kind: "rabbit", hp: 30, speedCmS: 180, disposition: "prey", aggroRangeM: 14, calmRangeM: 6, loot: [{ itemId: "raw_rabbit_meat", chance: 1 }, { itemId: "cloth", chance: 0.25 }] },
+  { kind: "chicken", hp: 25, speedCmS: 150, disposition: "prey", aggroRangeM: 12, calmRangeM: 5, loot: [{ itemId: "raw_chicken_meat", chance: 1 }, { itemId: "cloth", chance: 0.15 }] },
+  { kind: "deer", hp: 80, speedCmS: 240, disposition: "prey", aggroRangeM: 20, calmRangeM: 8, loot: [{ itemId: "raw_venison", chance: 1 }, { itemId: "leather", chance: 0.5 }, { itemId: "animal_fat", chance: 0.3 }] },
+  { kind: "wolf", hp: 100, speedCmS: 280, disposition: "hostile", aggroRangeM: 18, calmRangeM: 30, loot: [{ itemId: "raw_wolf_meat", chance: 0.6 }, { itemId: "leather", chance: 0.4 }] },
+];
+export const ANIMAL_BY_KIND = new Map<AnimalKind, AnimalDef>(ANIMALS.map((a) => [a.kind, a]));
+
 /** GDD §7: nodes have a resource pool, not hit points. */
 export const nodeIdSchema = z.string().regex(/^node_[a-z0-9_]+$/);
 export const nodeKindSchema = z.enum([
