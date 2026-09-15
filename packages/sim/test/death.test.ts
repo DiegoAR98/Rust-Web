@@ -37,7 +37,7 @@ describe("death transaction (T07: drops every carried/equipped item once and onl
     // exactly one corpse exists
     const corpses = [...store.values()].filter((e) => e.kind === "corpse");
     expect(corpses).toHaveLength(1);
-    expect(corpses[0].id).toBe(t.corpseEntityId);
+    expect(corpses[0]!.id).toBe(t.corpseEntityId);
 
     // player is empty
     expect(p.inventory.every((s) => s === null)).toBe(true);

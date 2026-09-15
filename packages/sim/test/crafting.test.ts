@@ -61,7 +61,7 @@ describe("M3 hand craft", () => {
     world.clock.tick = startTick + 60;
     const done = advanceCrafts(world, store);
     expect(done).toHaveLength(1);
-    expect(done[0].itemId).toBe("bandage");
+    expect(done[0]!.itemId).toBe("bandage");
     expect(p.inventory.some((s) => s?.itemId === "bandage")).toBe(true);
   });
 
@@ -115,8 +115,8 @@ describe("M3 station craft", () => {
     world.clock.tick = startTick + 180;
     const done = advanceCrafts(world, store);
     expect(done).toHaveLength(1);
-    expect(done[0].structureEntityId).toBe(furnace.id);
-    expect(done[0].itemId).toBe("metal_fragments");
+    expect(done[0]!.structureEntityId).toBe(furnace.id);
+    expect(done[0]!.itemId).toBe("metal_fragments");
     expect(p.inventory.some((s) => s?.itemId === "metal_fragments")).toBe(true);
   });
 
@@ -128,7 +128,7 @@ describe("M3 station craft", () => {
     const startTick = world.clock.tick;
     world.clock.tick = startTick + 90;
     const done = advanceCrafts(world, store);
-    expect(done[0].itemId).toBe("cooked_rabbit_meat");
+    expect(done[0]!.itemId).toBe("cooked_rabbit_meat");
     expect(p.inventory.some((s) => s?.itemId === "cooked_rabbit_meat")).toBe(true);
   });
 
@@ -151,7 +151,7 @@ describe("M3 station craft", () => {
     const startTick = world.clock.tick;
     world.clock.tick = startTick + 180;
     const done = advanceCrafts(world, store);
-    expect(done[0].dropped).toBe(true);
+    expect(done[0]!.dropped).toBe(true);
     const gi = [...store.values()].find((e) => e.kind === "ground_item");
     expect(gi).toBeDefined();
     expect((gi as { stack: { itemId: string } }).stack.itemId).toBe("metal_fragments");
@@ -246,12 +246,12 @@ describe("M3 death and crafting", () => {
     expect(corpse).toBeDefined();
     const stacks = (corpse as { inventory: Array<{ itemId: string } | null> }).inventory.filter(Boolean);
     expect(stacks.length).toBe(1);
-    expect(stacks[0].itemId).toBe("torch"); // ore was consumed, not refunded
+    expect(stacks[0]!.itemId).toBe("torch"); // ore was consumed, not refunded
   });
 
   it("runTick dispatches craft intents and emits crafted events", () => {
     const { world, store, p } = mk("p_p", [{ itemId: "cloth", quantity: 1 }]);
-    runTick(world, store, [{ playerId: p.playerId, sequence: 1, intent: { wishX: 0, wishZ: 0, sprint: false }, yawHundredths: 0, pitchHundredths: 0, craft: { recipeId: "recipe_bandage" } }]);
+    runTick(world, store, [{ playerId: p.playerId, sequence: 1, intent: { wishX: 0, wishZ: 0, jump: false, crouch: false, sprint: false, inWater: false }, yawHundredths: 0, pitchHundredths: 0, craft: { recipeId: "recipe_bandage" } }]);
     expect(p.craft).not.toBeNull();
     let crafted: ReturnType<typeof runTick>["crafted"] = [];
     for (let i = 0; i < 70; i++) {
@@ -262,7 +262,7 @@ describe("M3 death and crafting", () => {
       }
     }
     expect(crafted.length).toBe(1);
-    expect(crafted[0].itemId).toBe("bandage");
+    expect(crafted[0]!.itemId).toBe("bandage");
     expect(p.inventory.some((s) => s?.itemId === "bandage")).toBe(true);
   });
 });

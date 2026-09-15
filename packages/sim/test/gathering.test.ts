@@ -188,8 +188,10 @@ describe("seeded world node placement", () => {
     const b = [...storeB.values()];
     expect(a.length).toBe(b.length);
     for (let i = 0; i < a.length; i++) {
-      expect(a[i].position).toEqual(b[i].position);
-      expect(a[i].contentId).toBe(b[i].contentId);
+      const wa = a[i]! as WorldEntity;
+      const wb = b[i]! as WorldEntity;
+      expect(wa.position).toEqual(wb.position);
+      expect(wa.contentId).toBe(wb.contentId);
     }
   });
 

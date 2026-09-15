@@ -95,7 +95,6 @@ describe("ground drops and pickup (GDD 7/8)", () => {
     const p = mkPlayer(store, "p_a", 0, 0);
     p.inventory[0] = { itemId: "wood" as ItemId, quantity: 4 };
     dropToGround(world, store, p, 0);
-    const gi = [...store.values()].find((e) => e.kind === "ground_item") as GroundItemEntity;
     // wood despawns after 600 game s = 750 ticks
     for (let i = 0; i < 749; i++) world.clock.tick += 1;
     expect(applyGroundDespawn(world, store)).toHaveLength(0);

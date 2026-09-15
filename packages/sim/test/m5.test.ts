@@ -12,7 +12,6 @@ import {
   doseRateAt,
   radProtectionOf,
   accumulateForTicks,
-  applyRadiationTick,
   startChannel,
   advanceChannels,
   cancelChannel,
@@ -21,11 +20,10 @@ import {
   spawnWildlife,
   advanceWildlife,
   hitAnimal,
-  runTick,
   type PlayerEntity,
   type AnimalEntity,
 } from "@dustfall/sim";
-import { RADIATION_ZONES, RAD_DOSE_RATES, ANIMAL_BY_KIND } from "@dustfall/content";
+import { RADIATION_ZONES, RAD_DOSE_RATES } from "@dustfall/content";
 
 const testWorld = () => createWorld("m5", 0x5151, 0x0abc);
 

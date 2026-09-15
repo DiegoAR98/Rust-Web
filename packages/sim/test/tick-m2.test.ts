@@ -39,8 +39,8 @@ describe("M2 tick integration: gather -> move -> die -> loot", () => {
 
     const ev = runTick(world, store, [move("p_a", 1, { swing: { targetEntityId: node.id } })]);
     expect(ev.gathered).toHaveLength(1);
-    expect(ev.gathered[0].payout).toBe(2);
-    expect(ev.gathered[0].playerId).toBe("p_a");
+    expect(ev.gathered[0]!.payout).toBe(2);
+    expect(ev.gathered[0]!.playerId).toBe("p_a");
     expect(store.get(node.id) as WorldEntity).toMatchObject({ pool: 1 });
     expect(p.inventory.find((s) => s?.itemId === "stone")?.quantity).toBe(2);
   });
@@ -83,7 +83,7 @@ describe("M2 tick integration: gather -> move -> die -> loot", () => {
     }
     expect(ev?.deaths).toHaveLength(1);
     expect(ev?.died).toEqual(["p_a"]);
-    const tx = ev!.deaths[0];
+    const tx = ev!.deaths[0]!;
     expect(tx.playerId).toBe("p_a");
     // 7 wood + 1 boot
     expect(tx.transferred.reduce((n, t) => n + t.stack.quantity, 0)).toBe(8);
@@ -106,7 +106,7 @@ describe("M2 tick integration: gather -> move -> die -> loot", () => {
 
     ev = runTick(world, store, [move("p_a", 2, { pickup: { sourceEntityId: gi!.id } })]);
     expect(ev.inventory[0]).toMatchObject({ ok: true, kind: "pickup" });
-    expect(ev.inventory[0].taken).toEqual([{ itemId: "cloth", quantity: 4 }]);
+    expect(ev.inventory[0]!.taken).toEqual([{ itemId: "cloth", quantity: 4 }]);
     expect(p.inventory.find((s) => s?.itemId === "cloth")?.quantity).toBe(4);
     expect([...store.values()].filter((e) => e.kind === "ground_item")).toHaveLength(0);
   });
