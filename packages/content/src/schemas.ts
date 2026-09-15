@@ -27,6 +27,22 @@ export const itemCategorySchema = z.enum([
 
 export const stationSchema = z.enum(["hand", "campfire", "furnace", "workbench"]);
 
+/** M3: which station (if any) an item's recipes run at — derived from RECIPES, not stored. */
+export const researchableSchema = z.object({
+  /** blueprint payload this item teaches when researched (GDD §9 Research) */
+  blueprintPayload: blueprintIdSchema,
+});
+
+/** M3: station geometry (GDD §9: campfire = 3 cook + 1 fuel slot; furnace = 3 in / 3 out) */
+export const stationCapacitySchema = z.object({
+  /** input slots */
+  slots: z.number().int().min(1).max(9),
+  /** output slots */
+  outputs: z.number().int().min(1).max(9),
+  /** fuel slot count; 0 = not a fueled station */
+  fuel: z.number().int().min(0).max(1),
+});
+
 export const toolSchema = z.object({
   /** calories cost per swing (GDD §6) */
   swingCalories: z.number().nonnegative(),
@@ -95,6 +111,8 @@ export const itemSchema = z.object({
   food: foodSchema.optional(),
   consumable: consumableSchema.optional(),
   building: buildingSchema.optional(),
+  /** M3: researchable at the Workbench (GDD §9); payload is the blueprint id */
+  researchable: researchableSchema.optional(),
 });
 export type ItemDef = z.infer<typeof itemSchema>;
 

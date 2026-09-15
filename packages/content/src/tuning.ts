@@ -41,6 +41,11 @@ export const TUNING: TuningDef = {
   "gather.swing_reach_m": 3.0,
   "gather.swing_cooldown_ticks": 24,
   "gather.respawn_safety_window_seconds": 1440,
+  // M3: crafting & structure placement
+  "craft.reach_m": 3.0, // max distance to a placed station to use it
+  "build.place_reach_m": 5.0, // max distance to place a structure from the player
+  "build.min_spacing_m": 2.0, // min center-to-center distance between structures
+  "build.max_structures_per_player": 32,
   "ai.max_humans": 14,
   "ai.max_animals": 8,
   "ai.evidence_memory_seconds": 30,

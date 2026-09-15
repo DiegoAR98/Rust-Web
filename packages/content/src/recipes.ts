@@ -40,6 +40,21 @@ export const RECIPES: readonly RecipeDef[] = [
     timeTicks: 30, // 1 s
   },
   {
+    // M3: the GDD spine table omits the bow, but the M3 exit gate requires
+    // it ("first-session arc reaches ... bow"). Authored here as a default
+    // hand recipe (limb + stone tip + cloth string), first-session ~30 min.
+    id: "recipe_hunting_bow",
+    outputItemId: "hunting_bow",
+    outputQuantity: 1,
+    inputs: [
+      { itemId: "wood", quantity: 3 },
+      { itemId: "stone", quantity: 1 },
+      { itemId: "cloth", quantity: 1 },
+    ],
+    station: "hand",
+    timeTicks: 180, // 6 s
+  },
+  {
     id: "recipe_bandage",
     outputItemId: "bandage",
     outputQuantity: 1,
@@ -110,5 +125,54 @@ export const RECIPES: readonly RecipeDef[] = [
     inputs: [{ itemId: "wood", quantity: 8 }],
     station: "hand",
     timeTicks: 150, // 5 s
+  },
+  // ---- M3 station conversions (GDD Appendix B: furnace + campfire) ----
+  {
+    id: "recipe_cooked_rabbit_meat",
+    outputItemId: "cooked_rabbit_meat",
+    outputQuantity: 1,
+    inputs: [{ itemId: "raw_rabbit_meat", quantity: 1 }],
+    station: "campfire",
+    timeTicks: 90, // 3 s
+  },
+  {
+    id: "recipe_cooked_chicken_meat",
+    outputItemId: "cooked_chicken_meat",
+    outputQuantity: 1,
+    inputs: [{ itemId: "raw_chicken_meat", quantity: 1 }],
+    station: "campfire",
+    timeTicks: 90, // 3 s
+  },
+  {
+    id: "recipe_metal_fragments",
+    outputItemId: "metal_fragments",
+    outputQuantity: 1,
+    inputs: [{ itemId: "metal_ore", quantity: 1 }],
+    station: "furnace",
+    timeTicks: 180, // 6 s
+  },
+  {
+    id: "recipe_sulfur",
+    outputItemId: "sulfur",
+    outputQuantity: 1,
+    inputs: [{ itemId: "sulfur_ore", quantity: 1 }],
+    station: "furnace",
+    timeTicks: 180, // 6 s
+  },
+  {
+    id: "recipe_leather",
+    outputItemId: "leather",
+    outputQuantity: 1,
+    inputs: [{ itemId: "cloth", quantity: 1 }],
+    station: "furnace",
+    timeTicks: 180, // 6 s
+  },
+  {
+    id: "recipe_charcoal",
+    outputItemId: "charcoal",
+    outputQuantity: 1,
+    inputs: [{ itemId: "wood", quantity: 1 }],
+    station: "furnace",
+    timeTicks: 180, // 6 s
   },
 ];

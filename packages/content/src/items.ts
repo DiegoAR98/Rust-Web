@@ -9,7 +9,7 @@ export const ITEMS: readonly ItemDef[] = [
   // ---- tools ----
   { id: "rock", category: "tool", stackMax: 1, tool: { swingCalories: 5, toolMultiplier: 0.5 } },
   { id: "stone_hatchet", category: "tool", stackMax: 1, tool: { swingCalories: 10, toolMultiplier: 1 } },
-  { id: "hatchet", category: "tool", stackMax: 1, tool: { swingCalories: 10, toolMultiplier: 2 } },
+  { id: "hatchet", category: "tool", stackMax: 1, tool: { swingCalories: 10, toolMultiplier: 2 }, researchable: { blueprintPayload: "bp_pickaxe" } },
   { id: "pickaxe", category: "tool", stackMax: 1, tool: { swingCalories: 12, toolMultiplier: 2 } },
   { id: "torch", category: "tool", stackMax: 1, tool: { swingCalories: 0, toolMultiplier: 0.5 } },
   // ---- ammo (starter tier) ----

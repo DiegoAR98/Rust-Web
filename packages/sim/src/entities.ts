@@ -38,6 +38,13 @@ export interface PlayerEntity {
   equipment: Partial<Record<EquipmentSlot, ItemStack>>;
   /** blueprint payloads learned this world */
   blueprints: string[];
+  /** M3: active hand-craft (one per player, GDD §9). Station crafts live
+   *  on the StructureEntity. null = not crafting. */
+  craft: {
+    recipeId: string;
+    /** tick the craft completes at */
+    completesAtTick: number;
+  } | null;
   /** true while a death transaction is in flight */
   dead: boolean;
   /** ticks since last tick the player was alive */
@@ -81,7 +88,32 @@ export interface GroundItemEntity {
   despawnAtTick: number;
 }
 
-export type Entity = PlayerEntity | WorldEntity | CorpseEntity | GroundItemEntity;
+/**
+ * M3: a placed structure (Campfire, Furnace, Workbench, Wood Shelter,
+ * Sleeping Bag, Wood Storage Box). Placed from an inventory item; the item
+ * is consumed and the structure persists in the world with an owner
+ * (GDD §10: placement is server-validated and ownership-gated).
+ */
+export interface StructureEntity {
+  id: EntityId;
+  kind: "structure";
+  /** item id of the structure (campfire | furnace | workbench | ...) */
+  contentId: string;
+  position: Vec3;
+  /** playerId that placed it */
+  ownerId: string;
+  /** M3: active station craft (GDD §9: one shared queue per station) */
+  craft: {
+    recipeId: string;
+    completesAtTick: number;
+    /** player who started the craft */
+    startedBy: string;
+  } | null;
+  hp: number;
+  maxHp: number;
+}
+
+export type Entity = PlayerEntity | WorldEntity | CorpseEntity | GroundItemEntity | StructureEntity;
 
 /**
  * Entity store with deterministic ascending-EntityId iteration.
@@ -170,6 +202,7 @@ export const newPlayer = (
   inventory: new Array<ItemStack | null>(INVENTORY_SLOTS).fill(null),
   equipment: {},
   blueprints: [],
+  craft: null,
   dead: false,
   deadTicks: 0,
 });

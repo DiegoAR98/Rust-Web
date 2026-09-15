@@ -30,8 +30,10 @@ import { resolveSwing, applyNodeRespawns, type SwingResult } from "./gathering.j
 import { commitDeath, type DeathTransaction } from "./death.js";
 import { loot, dropToGround, applyGroundDespawn } from "./pickup.js";
 import { moveSlot, equipFromSlot, unequipSlot, type MoveResult } from "./inventory.js";
+import { startCraft, advanceCrafts, research as researchBp, placeStructure } from "./crafting.js";
 import type { EntityStore, PlayerEntity } from "./entities.js";
 import type { World } from "./world.js";
+import type { Vec3 } from "@dustfall/contracts";
 
 export interface TickCommand {
   playerId: string;
@@ -44,6 +46,12 @@ export interface TickCommand {
   pickup?: { sourceEntityId: string };
   drop?: { slot: number };
   moveItem?: { from: number; to: number; equip?: "helmet" | "vest" | "pants" | "boots" };
+  /** M3: begin a hand or station craft */
+  craft?: { recipeId: string; structureEntityId?: string };
+  /** M3: research a blueprint at the Workbench */
+  research?: { structureEntityId: string; itemId: string };
+  /** M3: place a structure from a grid slot */
+  place?: { slot: number; position: Vec3 };
   heldItemId?: string | null;
 }
 
@@ -72,6 +80,19 @@ export interface TickEvents {
     touched: number[];
     taken?: { itemId: string; quantity: number }[];
   }>;
+  /** M3: crafts that completed this tick */
+  crafted: Array<{
+    playerId: string;
+    recipeId: string;
+    structureEntityId?: string;
+    itemId: string;
+    quantity: number;
+    dropped: boolean;
+  }>;
+  /** M3: blueprints learned this tick */
+  researched: Array<{ playerId: string; payload: string }>;
+  /** M3: structures placed this tick */
+  placed: Array<{ playerId: string; structureEntityId: string; contentId: string }>;
 }
 
 /**
@@ -84,7 +105,7 @@ export const runTick = (world: World, store: EntityStore, commands: TickCommand[
     return a.sequence - b.sequence;
   });
 
-  const events: TickEvents = { moved: [], died: [], gathered: [], deaths: [], respawnedNodes: [], despawnedGround: [], inventory: [] };
+  const events: TickEvents = { moved: [], died: [], gathered: [], deaths: [], respawnedNodes: [], despawnedGround: [], inventory: [], crafted: [], researched: [], placed: [] };
 
   // group by player; the last command is the authoritative movement frame
   const byPlayer = new Map<string, TickCommand[]>();
@@ -154,6 +175,25 @@ export const runTick = (world: World, store: EntityStore, commands: TickCommand[
           touched: mr.touched,
         });
       }
+      if (cmd.craft) {
+        const r = startCraft(world, store, p, cmd.craft.recipeId, cmd.craft.structureEntityId);
+        if (!r.ok) {
+          // surface the rejection to the replication layer so the UI can
+          // show why the craft did not start
+          void r.reason;
+        }
+      }
+      if (cmd.research) {
+        const r = researchBp(world, store, p, cmd.research.structureEntityId, cmd.research.itemId);
+        if (r.ok && r.payload) events.researched.push({ playerId: p.playerId, payload: r.payload });
+      }
+      if (cmd.place) {
+        const r = placeStructure(world, store, p, cmd.place.slot, cmd.place.position);
+        if (r.ok && r.structureEntityId) {
+          const st = store.get(r.structureEntityId);
+          if (st && st.kind === "structure") events.placed.push({ playerId: p.playerId, structureEntityId: st.id, contentId: st.contentId });
+        }
+      }
     }
     if (last?.heldItemId !== undefined) p.heldItemId = (last.heldItemId ?? null) as PlayerEntity["heldItemId"];
 
@@ -188,5 +228,11 @@ export const runTick = (world: World, store: EntityStore, commands: TickCommand[
 
   // 12. advance tick exactly once
   advanceClock(world);
+
+  // 7b. M3: advance hand + station crafts AFTER the clock advanced, so a
+  //     craft with completesAtTick == oldTick+T completes on the T+1th tick
+  //     observed (completesAtTick > startTick).
+  events.crafted.push(...advanceCrafts(world, store));
+
   return events;
 };

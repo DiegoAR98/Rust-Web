@@ -4,6 +4,7 @@
 import { itemSchema, recipeSchema, radiationZoneSchema, tuningSchema, nodeSchema, nodePlacementSchema } from "./schemas.js";
 import { ITEMS } from "./items.js";
 import { RECIPES } from "./recipes.js";
+import { BLUEPRINTS } from "./blueprints.js";
 import { NODES, NODE_PLACEMENTS } from "./nodes.js";
 import { RADIATION_ZONES, REGIONS } from "./regions.js";
 import { TUNING } from "./tuning.js";
@@ -39,6 +40,7 @@ export const validateContent = (): ContentValidation => {
 
   let recipeCount = 0;
   const recipeIds = new Set<string>();
+  const requiredPayloads = new Set<string>();
   for (const raw of RECIPES) {
     const r = recipeSchema.safeParse(raw);
     if (!r.success) {
@@ -53,6 +55,34 @@ export const validateContent = (): ContentValidation => {
     if (!itemIds.has(rec.outputItemId)) fail(`recipe ${rec.id} outputs unknown item ${rec.outputItemId}`);
     for (const inp of rec.inputs) {
       if (!itemIds.has(inp.itemId)) fail(`recipe ${rec.id} references unknown input ${inp.itemId}`);
+    }
+    if (rec.requiresBlueprint) requiredPayloads.add(rec.requiresBlueprint);
+  }
+
+  // M3: blueprint payloads — every recipe-required payload must be defined;
+  // every researchable item must teach a defined payload; a payload with a
+  // source item must have that item present.
+  const definedPayloads = new Set<string>();
+  const sourceByPayload = new Map<string, string>();
+  for (const bp of BLUEPRINTS) {
+    if (definedPayloads.has(bp.payload)) fail(`duplicate blueprint payload ${bp.payload}`);
+    definedPayloads.add(bp.payload);
+    if (bp.sourceItemId) {
+      sourceByPayload.set(bp.payload, bp.sourceItemId);
+      if (!itemIds.has(bp.sourceItemId)) fail(`blueprint ${bp.payload} source item ${bp.sourceItemId} is not a known item`);
+    }
+  }
+  for (const p of requiredPayloads) {
+    if (!definedPayloads.has(p)) fail(`recipe requires unknown blueprint payload ${p}`);
+  }
+  // a researchable item's payload must be defined; a defined source must
+  // match the item's declared payload (one item teaches one payload)
+  for (const item of ITEMS) {
+    const res = (item as { researchable?: { blueprintPayload: string } }).researchable;
+    if (res) {
+      if (!definedPayloads.has(res.blueprintPayload)) fail(`item ${item.id} researchable payload ${res.blueprintPayload} is not a defined blueprint`);
+      const declaredSource = sourceByPayload.get(res.blueprintPayload);
+      if (declaredSource !== undefined && declaredSource !== item.id) fail(`blueprint ${res.blueprintPayload} source mismatch: declared ${declaredSource}, item ${item.id}`);
     }
   }
 

@@ -19,7 +19,7 @@
  * the region spawn with a fresh starter kit. The corpse and its contents
  * are recoverable (loot) or can be carried by raider AI (M7).
  */
-import type { EntityStore, PlayerEntity, CorpseEntity } from "./entities.js";
+import type { EntityStore, PlayerEntity, CorpseEntity, StructureEntity } from "./entities.js";
 import type { World } from "./world.js";
 import type { ItemStack as Stack } from "@dustfall/contracts";
 
@@ -78,6 +78,12 @@ export const commitDeath = (
     delete p.equipment[slot];
   }
   p.heldItemId = null;
+  p.craft = null; // GDD §9: death clears the in-progress craft and does not refund
+  for (const e of store.values()) {
+    if (e.kind === "structure" && e.craft && e.craft.startedBy === p.playerId) {
+      e.craft = null; // station craft is abandoned, no refund (GDD §9)
+    }
+  }
 
   // exactly one corpse, at the death location
   const corpseId = store.allocate();

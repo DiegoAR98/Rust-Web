@@ -175,3 +175,43 @@ export const applyGroundDespawn = (world: World, store: EntityStore): string[] =
   }
   return removed;
 };
+
+/**
+ * Spawn a ground-item stack at an arbitrary position (merging with a
+ * matching stack within 1.5 m, subject to the 400-stack cap). Used by
+ * M3 crafting when an output cannot fit in the starter's grid.
+ * Returns the (possibly merged) stack id, or null when the cap is hit.
+ */
+export const spawnGroundItem = (
+  world: World,
+  store: EntityStore,
+  itemId: ItemId,
+  quantity: number,
+  position: Vec3,
+  payload?: string,
+): string | null => {
+  if (quantity <= 0) return null;
+  const stack: ItemStack = { itemId, quantity, ...(payload ? { payload } : {}) };
+  const mergeRadius = (TUNING["loot.ground_pickup_radius"] as number) * 100;
+  for (const e of store.values()) {
+    if (e.kind !== "ground_item") continue;
+    const gi = e as GroundItemEntity;
+    if (!isMergeable(gi.stack, stack)) continue;
+    if (distCm(gi.position.x, gi.position.y, gi.position.z, position.x, position.y, position.z) > mergeRadius) continue;
+    const room = stackMax(stack.itemId) - gi.stack.quantity;
+    const take = Math.min(room, stack.quantity);
+    if (take > 0) gi.stack = { ...gi.stack, quantity: gi.stack.quantity + take };
+    return gi.id;
+  }
+  if (groundStackSize(store) >= (TUNING["loot.max_ground_stacks"] as number)) return null;
+  const despawn = catalogDespawnTicks(stack.itemId);
+  const gi: GroundItemEntity = {
+    id: store.allocate(),
+    kind: "ground_item",
+    position: { ...position },
+    stack,
+    despawnAtTick: despawn > 0 ? world.clock.tick + despawn : 0,
+  };
+  store.insert(gi);
+  return gi.id;
+};
