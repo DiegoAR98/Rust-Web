@@ -31,7 +31,8 @@ docs/milestones     current and completed milestone briefs
 - [x] M2 - survival loop: gathering, 36-slot inventory, death/corpse/respawn, pickup/loot/drop, ECDSA P-256 identity handshake (§22.4, ADR-0006), world autosave/load-on-boot, browser client with inventory UI (verified 2026-09-15, docs/milestones/M-2-brief.md)
 - [x] M3 - crafting: hand + station crafts (furnace/campfire/workbench), structure placement, blueprints + research, crafting UI, in-flight craft persistence (verified 2026-09-15, docs/milestones/M-3-brief.md)
 - [x] M4 - building grid, doors, storage, decay and sleeping bags (§10): wall/door/barricade pieces, melee breach (tool multiplier × 25), shared storage boxes, structure integrity + decay with owner refresh, destruction drops everything (nothing lost), two-player build+breach exit gate (verified 2026-09-15, docs/milestones/M-4-brief.md)
-- [ ] M5+ - see GDD §25 production roadmap
+- [x] M5 - survival, weather, radiation, wildlife and loot (§6/§12/§15/§16): 24× 60-minute day (ADR-0004), seeded weather FSM + cold deficit/campfire comfort, 4 radiation zones + Rad Suit (T03/T04 acceptance), food/med channels (sprint/swing cancels, shared medical cooldown), 4-kind wildlife FSM with cap + loot drops, M5 wire (weather/radiation/animal records, channel_done/animal_hit events), M5 exit gate (verified 2026-09-15, docs/milestones/M-5-brief.md)
+- [ ] M6+ - see GDD §25 production roadmap
 
 ## Development
 
@@ -74,6 +75,16 @@ node tools/smoke/src/m4-gate.mjs                 # P1 builds the base, P2 joins,
                                                  # withdraws the shared stash,
                                                  # places on the base, breaches
                                                  # P1's shelter to destruction
+```
+
+M5 exit gate (60-minute day + radiation acceptance suite; the deterministic
+suite runs under `pnpm test`, this gate proves the systems are live on the wire):
+
+```sh
+DUSTFALL_DATA_DIR=$(mktemp -d) DUSTFALL_DEV_KILL=1 pnpm dev:server
+node tools/smoke/src/m5-gate.mjs                 # 24x clock ~30 ticks/s, weather +
+                                                 # radiation on the wire, hunt an
+                                                 # animal to death + loot, food channel
 ```
 
 Known deviations from the GDD literal are recorded in `docs/adr/`
