@@ -3,5 +3,6 @@ export * from "./entities.js";
 export * from "./ids.js";
 export * from "./movement.js";
 export * from "./vitals-sys.js";
+export * from "./inventory.js";
 export * from "./tick.js";
 export * from "./rng.js";
