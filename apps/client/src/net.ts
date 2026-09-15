@@ -191,6 +191,12 @@ export class GameSocket {
     pickup?: { sourceEntityId: string };
     drop?: { slot: number };
     moveItem?: { from: number; to: number; equip?: "helmet" | "vest" | "pants" | "boots" };
+    /** M3: start a craft (hand, or at the given station) */
+    craft?: { recipeId: string; structureEntityId?: string };
+    /** M3: research an item into its blueprint at a workbench */
+    research?: { structureEntityId: string; itemId: string };
+    /** M3: place the structure item in `slot` at a quantized position */
+    place?: { slot: number; position: { x: number; y: number; z: number } };
     heldSlot?: number;
   }): void {
     if (this.ws.readyState !== WebSocket.OPEN || !this.grant) return;

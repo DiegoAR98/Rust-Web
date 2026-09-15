@@ -25,6 +25,10 @@ export interface ReplicaPlayer {
    * (the server sends inventory exclusively to the owner, GDD §22).
    */
   inventory?: (ItemStackProto | null)[];
+  /** M3: blueprint payloads the local player owns */
+  blueprints?: string[];
+  /** M3: in-flight hand-craft (own deltas only) */
+  handCraft: { recipeId: string; completesAtTick: number } | null;
 }
 
 export interface ReplicaNode {
@@ -57,6 +61,18 @@ export interface ReplicaGround {
   despawnAtTick: number;
 }
 
+export interface ReplicaStructure {
+  entityId: string;
+  contentId: string | undefined;
+  x: number;
+  y: number;
+  z: number;
+  ownerId: string | undefined;
+  hp: number | undefined;
+  /** active station craft, if any */
+  craft: { recipeId: string; completesAtTick: number; startedBy: string } | null;
+}
+
 export interface ReplicaEvent {
   event: string;
   entityId: string | undefined;
@@ -68,6 +84,7 @@ export class Replica {
   readonly nodes = new Map<string, ReplicaNode>();
   readonly corpses = new Map<string, ReplicaCorpse>();
   readonly ground = new Map<string, ReplicaGround>();
+  readonly structures = new Map<string, ReplicaStructure>();
   /** events since the last time the UI drained them */
   private pendingEvents: ReplicaEvent[] = [];
   serverTick = 0;
@@ -98,6 +115,7 @@ export class Replica {
         this.nodes.delete(rec.entityId);
         this.corpses.delete(rec.entityId);
         this.ground.delete(rec.entityId);
+        this.structures.delete(rec.entityId);
       }
     }
   }
@@ -117,6 +135,7 @@ export class Replica {
         health: rec.health ?? prev?.health ?? 100,
         calories: prev?.calories ?? 1500,
         posture: prev?.posture ?? "standing",
+        handCraft: rec.handCraft ?? null,
       });
     } else if (rec.kindTag === "world") {
       this.nodes.set(rec.entityId, {
@@ -147,6 +166,17 @@ export class Replica {
         quantity: rec.stack?.quantity ?? 0,
         despawnAtTick: rec.despawnAtTick ?? 0,
       });
+    } else if (rec.kindTag === "structure") {
+      this.structures.set(rec.entityId, {
+        entityId: rec.entityId,
+        contentId: rec.contentId,
+        x: pos.x,
+        y: pos.y,
+        z: pos.z,
+        ownerId: rec.ownerId,
+        hp: rec.hp,
+        craft: rec.craft ?? null,
+      });
     }
   }
 
@@ -165,6 +195,9 @@ export class Replica {
       if (rec.posture !== undefined) p.posture = rec.posture;
       if (rec.playerId) p.playerId = rec.playerId;
       if (rec.inventory) p.inventory = rec.inventory;
+      if (rec.blueprints) p.blueprints = rec.blueprints;
+      if (rec.handCraft) p.handCraft = rec.handCraft;
+      else p.handCraft = null; // explicit clear when the craft finishes
       return;
     }
     const node = this.nodes.get(rec.entityId);
@@ -197,6 +230,18 @@ export class Replica {
         g.itemId = rec.stack.itemId;
         g.quantity = rec.stack.quantity;
       }
+      return;
+    }
+    const st = this.structures.get(rec.entityId);
+    if (st) {
+      if (rec.position) {
+        st.x = rec.position.x;
+        st.y = rec.position.y;
+        st.z = rec.position.z;
+      }
+      if (rec.craft) st.craft = rec.craft;
+      else st.craft = null; // explicit clear when the station goes idle
+      return;
     }
   }
 }

@@ -462,7 +462,11 @@ export class Host {
           calories: Math.round(p.vitals.calories),
           posture: p.posture,
         };
-        if (isOwn) rec.inventory = p.inventory;
+        if (isOwn) {
+          rec.inventory = p.inventory;
+          if (p.blueprints.length > 0) rec.blueprints = [...p.blueprints];
+          if (p.craft) rec.handCraft = { recipeId: p.craft.recipeId, completesAtTick: p.craft.completesAtTick };
+        }
         recs.push(rec);
       }
       const snapshot: SnapshotProto = {
@@ -508,6 +512,7 @@ export class Host {
           rec.health = Math.round(p.vitals.health);
           rec.inventory = p.inventory;
           if (p.blueprints.length > 0) rec.blueprints = p.blueprints;
+          if (p.craft) rec.handCraft = { recipeId: p.craft.recipeId, completesAtTick: p.craft.completesAtTick };
         }
         records.push(rec);
       } else if (e.kind === "world") {

@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { GameSocket } from "./net.js";
 import { Replica } from "./replica.js";
+import { ITEMS, RECIPES, BLUEPRINTS } from "@dustfall/content";
 
 const serverUrl =
   (new URLSearchParams(location.search).get("server") ??
@@ -34,6 +35,7 @@ const playerMeshes = new Map<string, THREE.Mesh>();
 const nodeMeshes = new Map<string, THREE.Mesh>();
 const corpseMeshes = new Map<string, THREE.Mesh>();
 const groundItemMeshes = new Map<string, THREE.Mesh>();
+const structureMeshes = new Map<string, THREE.Group>();
 
 // ---- UI elements ----
 const hud = document.getElementById("hud")!;
@@ -43,11 +45,21 @@ const respawnBtn = document.getElementById("respawn") as HTMLButtonElement;
 const invPanel = document.getElementById("inv")!;
 const invGrid = document.getElementById("inv-grid")!;
 const hotbar = document.getElementById("hotbar")!;
+const craftPanel = document.getElementById("craft")!;
+const craftList = document.getElementById("craft-list")!;
+const craftProg = document.getElementById("craftProg")!;
+const placeHint = document.getElementById("placeHint")!;
+const ghostEl = document.getElementById("ghost")!;
 
 const ui = {
   inventoryOpen: false,
+  craftOpen: false,
   dead: false,
   held: null as null | { fromSlot: number; itemId: string; qty: number },
+  /** M3: slot the placement ghost is anchored to (null = not placing) */
+  placing: null as null | { slot: number; itemId: string },
+  /** M3: craft progress bar state (own hand-craft or nearest station) */
+  craftBar: null as null | { recipeId: string; completesAtTick: number; totalTicks: number },
 };
 
 // ---- input ----
@@ -59,7 +71,11 @@ let jumpQueued = false;
 let heldSlot = 0;
 
 renderer.domElement.addEventListener("click", () => {
-  if (!locked && !ui.inventoryOpen && !ui.dead) renderer.domElement.requestPointerLock();
+  if (ui.placing) {
+    placeAtCrosshair();
+    return;
+  }
+  if (!locked && !ui.inventoryOpen && !ui.craftOpen && !ui.dead) renderer.domElement.requestPointerLock();
 });
 document.addEventListener("pointerlockchange", () => {
   locked = document.pointerLockElement === renderer.domElement;
@@ -80,20 +96,6 @@ let myEntity = ""; // my entityId
 let lastInput = 0;
 let lastSwingMs = 0;
 
-// death: server omits dead players from batches and emits a death event
-const onDeath = (): void => {
-  ui.dead = true;
-  deathOverlay.style.display = "flex";
-  document.exitPointerLock?.();
-};
-
-const drainEvents = (): void => {
-  for (const ev of replica.drainEvents()) {
-    const pid = socket.playerIdentity?.playerId;
-    if (ev.event === "death" && pid && ev.payload.playerId === pid) onDeath();
-  }
-};
-
 const bindSocket = (s: GameSocket): void => {
   s.onSnapshot = (snap) => {
     replica.apply(snap);
@@ -102,7 +104,7 @@ const bindSocket = (s: GameSocket): void => {
       const ent = replica.entityForPlayer(pid);
       if (ent) myEntity = ent;
     }
-    drainEvents();
+    onM3Events();
   };
 };
 
@@ -115,7 +117,7 @@ const start = async (): Promise<void> => {
     hud.innerHTML =
       `Connected as ${me}<br>` +
       `<span style="color:#a89070">${grant.hasSavedPlayer ? "resumed saved character" : "new character"}</span>`;
-    notice.textContent = "Click canvas to lock pointer. E = gather/loot, Tab = inventory, 1-8 = hotbar, right-click slot = drop.";
+    notice.textContent = "Click canvas to lock pointer. E = gather/loot, Tab = inventory, C = crafting, 1-8 = hotbar, right-click slot = drop or place (structures).";
   } catch (err) {
     console.error(err);
     hud.innerHTML = "Failed to connect: " + (err instanceof Error ? err.message : String(err));
@@ -163,7 +165,12 @@ const buildInventory = (): void => {
     cell.addEventListener("click", () => onSlotClick(i));
     cell.addEventListener("contextmenu", (e) => {
       e.preventDefault();
-      onSlotRightClick(i);
+      const def = ITEMS.find((it) => it.id === (grid?.[i]?.itemId ?? ""));
+      if (def && (def.category === "building" || def.category === "deployable")) {
+        beginPlacement(i);
+      } else {
+        onSlotRightClick(i);
+      }
     });
     invGrid.appendChild(cell);
   }
@@ -200,6 +207,12 @@ const buildHotbar = (): void => {
       heldSlot = i;
       buildHotbar();
     });
+    c.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      const def = ITEMS.find((it) => it.id === (s?.itemId ?? ""));
+      if (def && (def.category === "building" || def.category === "deployable")) beginPlacement(i);
+      else if (s) socket.send({ ...moveFrame(), heldSlot, drop: { slot: i } });
+    });
     hotbar.appendChild(c);
   }
 };
@@ -211,6 +224,243 @@ const toggleInventory = (): void => {
     document.exitPointerLock?.();
     buildInventory();
   }
+};
+
+// ---- M3: crafting + structures + research (GDD §9) ----
+const ITEM_NAMES = new Map<string, string>(ITEMS.map((i) => [i.id, i.id.replace(/_/g, " ")]));
+const itemName = (id: string): string => ITEM_NAMES.get(id) ?? id;
+
+/** Count of an item across the local player's grid. */
+const have = (itemId: string, qty: number): boolean => {
+  const grid = myEntity ? replica.players.get(myEntity)?.inventory : undefined;
+  let n = 0;
+  for (const s of grid ?? []) n += s?.itemId === itemId ? s.quantity : 0;
+  return n >= qty;
+};
+
+const knownBlueprints = (): Set<string> => new Set(myEntity ? replica.players.get(myEntity)?.blueprints ?? [] : []);
+
+/** Nearest structure of a given content type within `reachM` of the player. */
+const nearestStation = (contentId: string, reachM: number): string | null => {
+  const myP = myEntity ? replica.players.get(myEntity) : undefined;
+  if (!myP) return null;
+  let best: string | null = null;
+  let bestD = reachM * reachM;
+  for (const st of replica.structures.values()) {
+    if (st.contentId !== contentId) continue;
+    const d = sq(myP.x, st.x) + sq(myP.z, st.z);
+    if (d < bestD) {
+      bestD = d;
+      best = st.entityId;
+    }
+  }
+  return best;
+};
+
+/**
+ * Build the recipe list: every hand recipe the player can attempt, plus the
+ * recipes of the nearest in-reach station (GDD §9). Blueprints the player has
+ * not learned are shown locked (craftable only after research at a Workbench).
+ */
+const buildCraftList = (): void => {
+  craftList.innerHTML = "";
+  const myP = myEntity ? replica.players.get(myEntity) : undefined;
+  if (!myP) return;
+  const blueprints = knownBlueprints();
+  const inReach: Record<string, string> = {};
+  for (const st of ["workbench", "campfire", "furnace"]) {
+    const id = nearestStation(st, 5);
+    if (id) inReach[st] = id;
+  }
+  const active = ui.craftBar ?? myP.handCraft;
+
+  for (const rec of RECIPES) {
+    const stationOk = rec.station === "hand" || inReach[rec.station];
+    if (!stationOk) continue;
+    const locked = rec.requiresBlueprint !== undefined && !blueprints.has(rec.requiresBlueprint);
+    const row = document.createElement("div");
+    row.className = "rrow" + (locked ? " locked" : "");
+    const out = rec.outputQuantity > 1 ? `${itemName(rec.outputItemId)} x${rec.outputQuantity}` : itemName(rec.outputItemId);
+    const cost = rec.inputs.map((i) => `${i.quantity} ${itemName(i.itemId)}`).join(", ");
+    const stationTag = rec.station === "hand" ? "" : ` @${rec.station}`;
+    row.innerHTML = `<div><div class="iname">${out}${stationTag}${active?.recipeId === rec.id ? " …" : ""}</div><div class="cost">${cost}</div></div>`;
+    if (locked) {
+      const bp = BLUEPRINTS.find((b) => b.payload === rec.requiresBlueprint);
+      const src = bp?.sourceItemId ? itemName(bp.sourceItemId) : "blueprint";
+      const bench = inReach["workbench"];
+      const canResearch = bench !== undefined && bp?.sourceItemId ? have(bp.sourceItemId, 1) && have("research_kit", 1) : false;
+      const btn = document.createElement("button");
+      btn.textContent = `Research ${src}`;
+      btn.disabled = !canResearch;
+      btn.addEventListener("click", () => {
+        if (!bench || !bp?.sourceItemId) return;
+        socket.send({ ...moveFrame(), heldSlot, research: { structureEntityId: bench, itemId: bp.sourceItemId } });
+        flashNotice(`Researching ${src}…`);
+      });
+      row.appendChild(btn);
+    } else {
+      const btn = document.createElement("button");
+      const busy = !!active;
+      const canAfford = rec.inputs.every((i) => have(i.itemId, i.quantity));
+      btn.textContent = busy ? "busy" : "Craft";
+      btn.disabled = busy || !canAfford;
+      btn.addEventListener("click", () => {
+        const stationId = rec.station === "hand" ? undefined : inReach[rec.station];
+        if (!stationId && rec.station !== "hand") return;
+        socket.send({ ...moveFrame(), heldSlot, craft: { recipeId: rec.id, ...(stationId ? { structureEntityId: stationId } : {}) } });
+      });
+      row.appendChild(btn);
+    }
+    craftList.appendChild(row);
+  }
+};
+
+/** Refresh the craft progress bar from the authoritative state each tick. */
+const updateCraftBar = (): void => {
+  const myP = myEntity ? replica.players.get(myEntity) : undefined;
+  if (!myP) return;
+  let craft: { recipeId: string; completesAtTick: number } | null = myP.handCraft;
+  let stationLabel = "";
+  // station craft in reach overrides the display when the player is standing there
+  for (const st of ["workbench", "campfire", "furnace"]) {
+    const id = nearestStation(st, 5);
+    if (!id) continue;
+    const s = replica.structures.get(id);
+    if (s?.craft && s.craft.startedBy === me) {
+      craft = s.craft;
+      stationLabel = ` @${st}`;
+      break;
+    }
+  }
+  if (!craft) {
+    ui.craftBar = null;
+    craftProg.style.display = "none";
+    return;
+  }
+  const rec = RECIPES.find((r) => r.id === craft!.recipeId);
+  if (!rec) {
+    ui.craftBar = null;
+    craftProg.style.display = "none";
+    return;
+  }
+  ui.craftBar = { recipeId: craft.recipeId, completesAtTick: craft.completesAtTick, totalTicks: rec.timeTicks };
+  const remaining = Math.max(0, craft.completesAtTick - replica.serverTick);
+  const pct = Math.max(0, Math.min(100, (1 - remaining / rec.timeTicks) * 100));
+  craftProg.style.display = "block";
+  craftProg.innerHTML = `crafting ${itemName(rec.outputItemId)}${stationLabel}<br><span class="bar" style="width:200px;display:inline-block"><div style="width:${pct}%"></div></span> ${Math.ceil(remaining / 30)}s`;
+};
+
+// notice helper
+let lastFlash = 0;
+const flashNotice = (msg: string): void => {
+  const now = performance.now();
+  if (now - lastFlash < 300) return;
+  lastFlash = now;
+  notice.textContent = msg;
+};
+
+// craft / blueprint events: refresh the panel + show a toast
+const onM3Events = (): void => {
+  let refresh = false;
+  let msg: string | null = null;
+  for (const ev of replica.drainEvents()) {
+    const pid = socket.playerIdentity?.playerId;
+    if (ev.event === "death" && pid && ev.payload.playerId === pid) {
+      ui.dead = true;
+      deathOverlay.style.display = "flex";
+      document.exitPointerLock?.();
+      continue;
+    }
+    if (ev.event === "craft" && pid && ev.payload.playerId === pid) {
+      refresh = true;
+      const dropped = ev.payload.dropped === true;
+      msg = `${itemName(String(ev.payload.itemId))} x${ev.payload.quantity} ${dropped ? "(grid full — dropped at the station)" : "crafted"}`;
+    } else if (ev.event === "blueprint" && pid && ev.payload.playerId === pid) {
+      refresh = true;
+      const bp = BLUEPRINTS.find((b) => b.payload === ev.payload.payload);
+      msg = bp?.sourceItemId ? `Blueprint learned: ${itemName(bp.sourceItemId)}` : "Blueprint learned";
+    } else if (ev.event === "build") {
+      refresh = true; // structure spawn arrives with the same batch
+    }
+  }
+  if (msg) flashNotice(msg);
+  if (refresh) buildCraftList();
+};
+
+// ---- M3: craft panel + structure placement ----
+const toggleCraftPanel = (): void => {
+  ui.craftOpen = !ui.craftOpen;
+  craftPanel.style.display = ui.craftOpen ? "block" : "none";
+  if (ui.craftOpen) {
+    document.exitPointerLock?.();
+    buildCraftList();
+  } else {
+    placeHint.style.display = "none";
+  }
+};
+(document.getElementById("craft-close") as HTMLButtonElement).addEventListener("click", toggleCraftPanel);
+
+/**
+ * Begin placing the item in `slot` (must be a building/deployable).
+ * The ghost follows the crosshair; the server proves reach/spacing/cap.
+ */
+const beginPlacement = (slot: number): void => {
+  const stack = myEntity ? replica.players.get(myEntity)?.inventory?.[slot] ?? null : null;
+  if (!stack) return;
+  const def = ITEMS.find((i) => i.id === stack.itemId);
+  if (!def || (def.category !== "building" && def.category !== "deployable")) return;
+  ui.placing = { slot, itemId: stack.itemId };
+  placeHint.style.display = "block";
+  ghostEl.style.display = "block";
+  document.exitPointerLock?.();
+};
+
+const cancelPlacement = (): void => {
+  ui.placing = null;
+  placeHint.style.display = "none";
+  ghostEl.style.display = "none";
+};
+
+/** Raycast the crosshair onto the ground plane; returns world cm or null. */
+const crosshairGround = (): { x: number; z: number } | null => {
+  const myP = myEntity ? replica.players.get(myEntity) : undefined;
+  if (!myP) return null;
+  const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+  const origin = camera.position.clone();
+  const denom = dir.y;
+  if (Math.abs(denom) < 1e-4) return null;
+  const t = -origin.y / denom;
+  if (t < 0) return null;
+  const wx = origin.x + dir.x * t;
+  const wz = origin.z + dir.z * t;
+  return { x: Math.round(wx * 100), z: Math.round(wz * 100) };
+};
+
+/** Update the placement ghost each frame; called from the render loop. */
+const updatePlacement = (): void => {
+  if (!ui.placing) {
+    ghostEl.style.display = "none";
+    return;
+  }
+  ghostEl.style.display = "block";
+  const pt = crosshairGround();
+  const myP = myEntity ? replica.players.get(myEntity) : undefined;
+  let inReach = false;
+  if (pt && myP) {
+    const d2 = sq(pt.x, myP.x) + sq(pt.z, myP.z);
+    inReach = d2 <= 500 * 500; // 5 m; the server proves the authoritative value
+  }
+  ghostEl.classList.toggle("out", !inReach || !pt);
+};
+
+const placeAtCrosshair = (): void => {
+  if (!ui.placing) return;
+  const pt = crosshairGround();
+  if (!pt) return;
+  const slot = ui.placing.slot;
+  ui.placing = null;
+  ghostEl.style.display = "none";
+  socket.send({ ...moveFrame(), heldSlot, place: { slot, position: { x: pt.x, y: 0, z: pt.z } } });
 };
 
 // ---- interact: E gathers the nearest node or loots the nearest corpse/ground item ----
@@ -254,7 +504,7 @@ const sq = (a: number, b: number): number => {
   return d * d;
 };
 
-// ---- key handling: movement keys, hotbar, inventory, interact ----
+// ---- key handling: movement keys, hotbar, inventory, interact, craft, place ----
 window.addEventListener("keydown", (e) => {
   keys.add(e.code);
   if (e.code === "Space") jumpQueued = true;
@@ -268,6 +518,8 @@ window.addEventListener("keydown", (e) => {
     toggleInventory();
   }
   if ((e.key === "e" || e.key === "E" || e.key === "f" || e.key === "F") && !ui.dead && !ui.inventoryOpen) interact();
+  if ((e.key === "c" || e.key === "C") && !ui.dead) toggleCraftPanel();
+  if (e.key === "Escape" && ui.placing) cancelPlacement();
 });
 window.addEventListener("keyup", (e) => keys.delete(e.code));
 
@@ -370,10 +622,84 @@ const syncMeshes = (): void => {
     scene.remove(m);
     groundItemMeshes.delete(id);
   }
+  // M3 structures: simple colored boxes per content type + a craft-progress tint
+  for (const [id, st] of replica.structures) {
+    let g = structureMeshes.get(id);
+    if (!g) {
+      g = structureMeshFor(st.contentId);
+      scene.add(g);
+      structureMeshes.set(id, g);
+    }
+    g.position.set(st.x / 100, structureBaseY(st.contentId) + st.y / 100, st.z / 100);
+    const child = g.children[0] as THREE.Mesh | undefined;
+    if (child) {
+      const mat = child.material as THREE.MeshLambertMaterial;
+      mat.emissive.set(st.craft ? 0x664400 : 0x000000);
+    }
+  }
+  for (const [id, g] of structureMeshes) if (!replica.structures.has(id)) {
+    scene.remove(g);
+    structureMeshes.delete(id);
+  }
+};
+
+/** A low-poly stand-in per structure content id (M4 adds a real build kit). */
+const structureBaseY = (contentId: string | undefined): number => {
+  switch (contentId) {
+    case "wood_shelter":
+      return 1.2;
+    case "furnace":
+      return 0.7;
+    case "workbench":
+      return 0.45;
+    case "wood_storage_box":
+      return 0.4;
+    case "sleeping_bag":
+      return 0.2;
+    case "campfire":
+    default:
+      return 0.15;
+  }
+};
+
+const structureMeshFor = (contentId: string | undefined): THREE.Group => {
+  const g = new THREE.Group();
+  let geo: THREE.BufferGeometry;
+  let color = 0x5a4a30;
+  switch (contentId) {
+    case "wood_shelter":
+      geo = new THREE.BoxGeometry(3, 2.4, 3);
+      color = 0x8a6a40;
+      break;
+    case "furnace":
+      geo = new THREE.BoxGeometry(0.9, 1.4, 0.9);
+      color = 0x666058;
+      break;
+    case "workbench":
+      geo = new THREE.BoxGeometry(1.1, 0.9, 0.8);
+      color = 0x7a5a30;
+      break;
+    case "wood_storage_box":
+      geo = new THREE.BoxGeometry(0.9, 0.8, 0.9);
+      color = 0x6a5030;
+      break;
+    case "sleeping_bag":
+      geo = new THREE.BoxGeometry(1.1, 0.4, 0.8);
+      color = 0x4a5a6a;
+      break;
+    case "campfire":
+    default:
+      geo = new THREE.CylinderGeometry(0.5, 0.5, 0.3, 10);
+      color = contentId === "campfire" ? 0xa05020 : 0x5a4a30;
+  }
+  g.add(new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ color })));
+  return g;
 };
 
 renderer.setAnimationLoop(() => {
   syncMeshes();
+  updatePlacement();
+  updateCraftBar();
   const mine = myEntity ? replica.players.get(myEntity) : undefined;
   if (mine) {
     const s = smooth.get(myEntity) ?? { x: mine.x / 100, y: mine.y / 100 + 1.8, z: mine.z / 100 };

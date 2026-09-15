@@ -42,6 +42,13 @@ export const SpawnRecordSchema = z.object({
     .optional(),
   /** M3: blueprint payloads the joining player owns */
   blueprints: z.array(z.string().max(64)).max(32).optional(),
+  /** M3: the joining player's in-flight hand-craft */
+  handCraft: z
+    .object({
+      recipeId: z.string().min(2).max(64),
+      completesAtTick: z.number().int().nonnegative(),
+    })
+    .optional(),
 });
 
 export const DeltaRecordSchema = z.object({
@@ -72,6 +79,13 @@ export const DeltaRecordSchema = z.object({
       recipeId: z.string().min(2).max(64),
       completesAtTick: z.number().int().nonnegative(),
       startedBy: z.string().min(3).max(80),
+    })
+    .optional(),
+  /** M3: the owner's in-flight hand-craft (own deltas only; null clears) */
+  handCraft: z
+    .object({
+      recipeId: z.string().min(2).max(64),
+      completesAtTick: z.number().int().nonnegative(),
     })
     .optional(),
 });
