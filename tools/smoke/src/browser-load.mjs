@@ -22,16 +22,17 @@ page.on("pageerror", (err) => consoleErrors.push(String(err)));
 
 await page.goto(BASE, { waitUntil: "load" });
 
-// Wait for the HUD to enter the live state: "tick <n> | pos x,y,z"
+// Wait for the HUD to enter the live state: "tick <n> | <weather> | pos x,y,z"
 // appears only after the baseline + first replica batch have been applied.
+// (M5 inserted the weather token between the tick and the position.)
 let hud = "";
 for (let i = 0; i < 30; i++) {
   await page.waitForTimeout(500);
   hud = (await page.textContent("#hud"))?.trim() ?? "";
-  if (/^tick \d+ \| pos /.test(hud)) break;
+  if (/^tick \d+ \| .* \| pos /.test(hud)) break;
 }
 console.log("HUD after load:", hud);
-if (!/^tick \d+ \| pos /.test(hud)) {
+if (!/^tick \d+ \| .* \| pos /.test(hud)) {
   console.error("FAIL: client did not reach live replica state (no baseline applied). HUD:", hud);
   await browser.close();
   process.exit(1);
