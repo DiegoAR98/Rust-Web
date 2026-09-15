@@ -39,6 +39,10 @@ export interface EntitySave {
     inventory?: (ItemStack | null)[];
     /** ground stack for ground_item entities */
     stack?: ItemStack;
+    /** M3: structure owner + integrity (structure entities) */
+    ownerId?: string;
+    hp?: number;
+    maxHp?: number;
   };
 }
 

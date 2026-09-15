@@ -13,7 +13,7 @@ export type ItemStackProto = z.infer<typeof ItemStackSchema>;
 export const SpawnRecordSchema = z.object({
   kind: z.literal("spawn"),
   entityId: z.string().regex(/^e_[0-9a-f]{4,}$/),
-  kindTag: z.enum(["player", "world", "corpse", "ground_item"]),
+  kindTag: z.enum(["player", "world", "corpse", "ground_item", "structure"]),
   position: z.object({ x: z.number().int(), y: z.number().int(), z: z.number().int() }),
   contentId: z.string().optional(),
   /** M2: node pool / accumulator / respawn for world entities */
@@ -29,6 +29,19 @@ export const SpawnRecordSchema = z.object({
   health: z.number().int().min(0).max(100).optional(),
   /** M2: which player this body belongs to (lets the client find "me") */
   playerId: z.string().min(3).max(80).optional(),
+  /** M3: structure owner + integrity */
+  ownerId: z.string().min(3).max(80).optional(),
+  hp: z.number().int().optional(),
+  /** M3: active station craft at join time */
+  craft: z
+    .object({
+      recipeId: z.string().min(2).max(64),
+      completesAtTick: z.number().int().nonnegative(),
+      startedBy: z.string().min(3).max(80),
+    })
+    .optional(),
+  /** M3: blueprint payloads the joining player owns */
+  blueprints: z.array(z.string().max(64)).max(32).optional(),
 });
 
 export const DeltaRecordSchema = z.object({
@@ -50,6 +63,17 @@ export const DeltaRecordSchema = z.object({
   playerId: z.string().min(3).max(80).optional(),
   /** M2: the owner's live inventory grid (server sends it on their own deltas) */
   inventory: z.array(ItemStackSchema.nullable()).max(40).optional(),
+  /** M3: blueprint payloads learned (own deltas) */
+  blueprints: z.array(z.string().max(64)).max(32).optional(),
+  /** M3: structure integrity / active craft */
+  hp: z.number().int().optional(),
+  craft: z
+    .object({
+      recipeId: z.string().min(2).max(64),
+      completesAtTick: z.number().int().nonnegative(),
+      startedBy: z.string().min(3).max(80),
+    })
+    .optional(),
 });
 
 export const EventRecordSchema = z.object({

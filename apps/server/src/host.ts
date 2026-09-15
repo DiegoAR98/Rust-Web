@@ -43,6 +43,8 @@ export class Host {
   private readonly issuedTokens = new Map<string, string>();
   /** entity id -> last-sent node payload */
   private readonly nodeSeen = new Map<string, NodeSnapshot>();
+  /** entity id -> last-sent structure craft payload (null = idle) */
+  private readonly structureSeen = new Map<string, { recipeId: string; completesAtTick: number; startedBy: string } | null>();
   /** entities sent to at least one ready session (new ones need a spawn record) */
   private readonly globalSent = new Set<string>();
   /** events awaiting forwarding (batches only fire on odd ticks; no tick's events may be dropped, §21.7) */
@@ -181,7 +183,7 @@ export class Host {
     p.dead = true;
     const tx = commitDeath(this.world, this.store, p);
     if (tx) {
-      this.pendingEvents.push({ moved: [], died: [playerId], gathered: [], deaths: [tx], respawnedNodes: [], despawnedGround: [], inventory: [] });
+      this.pendingEvents.push({ moved: [], died: [playerId], gathered: [], deaths: [tx], respawnedNodes: [], despawnedGround: [], inventory: [], crafted: [], researched: [], placed: [] });
       for (const h of this.deathHooks) h();
     }
     return tx?.corpseEntityId ?? null;
@@ -258,6 +260,14 @@ export class Host {
             if (cmd.moveItem.equip) mi.equip = cmd.moveItem.equip;
             intent.moveItem = mi;
           }
+          // M3 intents
+          if (cmd.craft) {
+            const c: TickCommand["craft"] = { recipeId: cmd.craft.recipeId };
+            if (cmd.craft.structureEntityId !== undefined) c.structureEntityId = cmd.craft.structureEntityId;
+            intent.craft = c;
+          }
+          if (cmd.research) intent.research = cmd.research;
+          if (cmd.place) intent.place = cmd.place;
           if (cmd.heldSlot !== undefined && p) {
             intent.heldItemId = p.inventory[cmd.heldSlot]?.itemId ?? null;
           }
@@ -346,6 +356,38 @@ export class Host {
             stack: g.stack,
           });
         }
+      } else if (e.kind === "structure") {
+        const st = e as import("@dustfall/sim").StructureEntity;
+        const craftState = st.craft ?? null;
+        if (!this.globalSent.has(e.id)) {
+          records.push({
+            kind: "spawn",
+            entityId: e.id,
+            kindTag: "structure",
+            contentId: st.contentId,
+            position: { x: st.position.x, y: st.position.y, z: st.position.z },
+            ownerId: st.ownerId,
+            hp: st.hp,
+            craft: st.craft ?? undefined,
+          });
+        } else {
+          const seenCraft = this.structureSeen.get(e.id) ?? null;
+          const same =
+            seenCraft === null
+              ? craftState === null
+              : craftState !== null &&
+                seenCraft.recipeId === craftState.recipeId &&
+                seenCraft.completesAtTick === craftState.completesAtTick &&
+                seenCraft.startedBy === craftState.startedBy;
+          if (!same) {
+            records.push({
+              kind: "delta",
+              entityId: e.id,
+              craft: st.craft ?? undefined, // undefined when idle: clear the client's bar
+            });
+          }
+        }
+        this.structureSeen.set(e.id, craftState);
       }
       this.globalSent.add(e.id);
     }
@@ -378,6 +420,21 @@ export class Host {
       for (const gid of ev.despawnedGround) {
         records.push({ kind: "event", event: "ground_despawn", payload: { entityId: gid } });
         records.push({ kind: "forget", entityId: gid });
+      }
+      // M3 authoritative events
+      for (const c of ev.crafted) {
+        records.push({
+          kind: "event",
+          entityId: c.structureEntityId,
+          event: "craft",
+          payload: { playerId: c.playerId, recipeId: c.recipeId, itemId: c.itemId, quantity: c.quantity, dropped: c.dropped },
+        });
+      }
+      for (const r of ev.researched) {
+        records.push({ kind: "event", event: "blueprint", payload: { playerId: r.playerId, payload: r.payload } });
+      }
+      for (const pl of ev.placed) {
+        records.push({ kind: "event", entityId: pl.structureEntityId, event: "build", payload: { playerId: pl.playerId, contentId: pl.contentId } });
       }
     }
 
@@ -450,6 +507,7 @@ export class Host {
         if (isSelf) {
           rec.health = Math.round(p.vitals.health);
           rec.inventory = p.inventory;
+          if (p.blueprints.length > 0) rec.blueprints = p.blueprints;
         }
         records.push(rec);
       } else if (e.kind === "world") {
@@ -484,6 +542,20 @@ export class Host {
           stack: g.stack,
           despawnAtTick: g.despawnAtTick,
         });
+      } else if (e.kind === "structure") {
+        const st = e as import("@dustfall/sim").StructureEntity;
+        const rec: SnapshotProto["records"][number] = {
+          kind: "spawn",
+          entityId: e.id,
+          kindTag: "structure",
+          contentId: st.contentId,
+          position: { x: st.position.x, y: st.position.y, z: st.position.z },
+          ownerId: st.ownerId,
+          hp: st.hp,
+        };
+        if (st.craft) rec.craft = st.craft;
+        records.push(rec);
+        this.structureSeen.set(e.id, st.craft ?? null);
       }
     }
     const snapshot: SnapshotProto = {
@@ -621,6 +693,16 @@ export class Host {
           pool: 0,
           payload: { stack: { ...g.stack }, despawnAtTick: g.despawnAtTick },
         });
+      } else if (e.kind === "structure") {
+        const st = e as import("@dustfall/sim").StructureEntity;
+        entities.push({
+          entityId: st.id,
+          kind: "structure",
+          contentId: st.contentId,
+          position: { ...st.position },
+          pool: 0,
+          payload: { ownerId: st.ownerId, hp: st.hp, maxHp: st.maxHp },
+        });
       }
     }
     return {
@@ -695,6 +777,20 @@ export class Host {
           despawnAtTick: es.payload?.despawnAtTick ?? 0,
         };
         this.store.insert(g);
+        restoredIds.push(es.entityId);
+      } else if (es.kind === "structure") {
+        const st: import("@dustfall/sim").StructureEntity = {
+          id,
+          kind: "structure",
+          contentId: es.contentId,
+          position,
+          ownerId: es.payload?.ownerId ?? "",
+          craft: null, // in-flight station craft does not survive a restart
+          hp: es.payload?.hp ?? 100,
+          maxHp: es.payload?.maxHp ?? 100,
+        };
+        this.store.insert(st);
+        this.structureSeen.set(st.id, null);
         restoredIds.push(es.entityId);
       }
     }

@@ -16,6 +16,13 @@ export type MovementIntentProto = z.infer<typeof MovementIntentSchema>;
 
 export const EquipmentSlotName = z.enum(["helmet", "vest", "pants", "boots"]);
 
+/** M3: server-side structure placement target (integer cm, §21.5) */
+const PlacementPositionSchema = z.object({
+  x: z.number().int().min(-100_000_000).max(100_000_000),
+  y: z.number().int().min(-100_000_000).max(100_000_000),
+  z: z.number().int().min(-100_000_000).max(100_000_000),
+});
+
 export const ClientCommandSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("move"),
@@ -37,6 +44,27 @@ export const ClientCommandSchema = z.discriminatedUnion("kind", [
         /** 0..35 target grid slot, or -1 when equipping/unequipping */
         to: z.number().int().min(-1).max(35),
         equip: EquipmentSlotName.optional(),
+      })
+      .optional(),
+    /** M3: begin a hand craft, or a station craft when structureEntityId is set */
+    craft: z
+      .object({
+        recipeId: z.string().min(2).max(64),
+        structureEntityId: z.string().regex(/^e_[0-9a-f]{4,}$/).optional(),
+      })
+      .optional(),
+    /** M3: research a blueprint payload at the Workbench */
+    research: z
+      .object({
+        structureEntityId: z.string().regex(/^e_[0-9a-f]{4,}$/),
+        itemId: z.string().regex(/^[a-z][a-z0-9_]*$/),
+      })
+      .optional(),
+    /** M3: place a structure from grid slot at the given position */
+    place: z
+      .object({
+        slot: z.number().int().min(0).max(35),
+        position: PlacementPositionSchema,
       })
       .optional(),
     /** hotbar slot 0..7 selection; the server derives heldItemId from it */

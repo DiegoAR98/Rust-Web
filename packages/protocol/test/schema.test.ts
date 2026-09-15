@@ -181,3 +181,57 @@ describe("M2 wire records", () => {
     }
   });
 });
+
+describe("M3 crafting commands + records", () => {
+  const base = { kind: "move", wishX: 0, wishZ: 0, jump: false, crouch: false, sprint: false, inWater: false, yawHundredths: 0, pitchHundredths: 0 };
+  const env = (commands: unknown[]) => ({ protocol: 1, sessionId: "s", sequence: 1, clientTick: 1, commands });
+
+  it("accepts M3 craft/research/place intents", () => {
+    expect(
+      ClientEnvelopeSchema.safeParse(env([{ ...base, craft: { recipeId: "recipe_bandage" } }])).success,
+    ).toBe(true);
+    expect(
+      ClientEnvelopeSchema.safeParse(env([{ ...base, craft: { recipeId: "recipe_pickaxe", structureEntityId: "e_0010" } }])).success,
+    ).toBe(true);
+    expect(
+      ClientEnvelopeSchema.safeParse(env([{ ...base, research: { structureEntityId: "e_0010", itemId: "hatchet" } }])).success,
+    ).toBe(true);
+    expect(
+      ClientEnvelopeSchema.safeParse(env([{ ...base, place: { slot: 5, position: { x: 100, y: 0, z: -200 } } }])).success,
+    ).toBe(true);
+  });
+
+  it("rejects malformed M3 intents", () => {
+    expect(ClientEnvelopeSchema.safeParse(env([{ ...base, craft: { recipeId: "" } }])).success).toBe(false);
+    expect(ClientEnvelopeSchema.safeParse(env([{ ...base, research: { structureEntityId: "nope", itemId: "hatchet" } }])).success).toBe(false);
+    expect(ClientEnvelopeSchema.safeParse(env([{ ...base, place: { slot: 36, position: { x: 0, y: 0, z: 0 } } }])).success).toBe(false);
+    expect(ClientEnvelopeSchema.safeParse(env([{ ...base, place: { slot: 0, position: { x: 0.5, y: 0, z: 0 } } }])).success).toBe(false);
+  });
+
+  it("snapshot carries structures, craft state and blueprints", () => {
+    const snap = {
+      protocol: 1,
+      serverTick: 10,
+      batchSequence: 3,
+      ackInputSequence: 1,
+      baselineId: 1,
+      records: [
+        {
+          kind: "spawn",
+          entityId: "e_000a",
+          kindTag: "structure",
+          position: { x: 0, y: 0, z: 100 },
+          contentId: "furnace",
+          ownerId: "player_a",
+          hp: 100,
+        },
+        { kind: "delta", entityId: "e_000a", craft: { recipeId: "recipe_metal_fragments", completesAtTick: 400, startedBy: "player_a" } },
+        { kind: "delta", entityId: "e_000b", playerId: "player_a", blueprints: ["bp_pickaxe"] },
+        { kind: "event", event: "craft", payload: { recipeId: "recipe_bandage", itemId: "bandage" } },
+        { kind: "event", event: "build", payload: { structureEntityId: "e_000a" } },
+        { kind: "event", event: "blueprint", payload: { payload: "bp_pickaxe" } },
+      ],
+    };
+    expect(SnapshotSchema.safeParse(snap).success).toBe(true);
+  });
+});
