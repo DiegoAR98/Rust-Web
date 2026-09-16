@@ -27,4 +27,14 @@ export interface BlueprintDef {
 export const BLUEPRINTS: readonly BlueprintDef[] = [
   { payload: "bp_pickaxe", sourceItemId: "hatchet" },
   { payload: "bp_metal_building", sourceItemId: undefined }, // loot-only, GDD §9
+  // M6: the weapon/explosive/armor ladder. Each payload is carried by its own
+  // item, so looting one lets a player research it at a Workbench and craft
+  // more (GDD §9: research = one Research Kit + one unit of the item).
+  { payload: "bp_assault_rifle", sourceItemId: "assault_rifle" },
+  { payload: "bp_bolt_action_rifle", sourceItemId: "bolt_action_rifle" },
+  { payload: "bp_explosive_charge", sourceItemId: "explosive_charge" },
+  { payload: "bp_ballistic_helmet", sourceItemId: "ballistic_helmet" },
+  { payload: "bp_ballistic_vest", sourceItemId: "ballistic_vest" },
+  { payload: "bp_ballistic_pants", sourceItemId: "ballistic_pants" },
+  { payload: "bp_ballistic_boots", sourceItemId: "ballistic_boots" },
 ];

@@ -92,6 +92,17 @@ export const ClientCommandSchema = z.discriminatedUnion("kind", [
         kind: z.enum(["food", "bandage", "medkit", "antirad"]),
       })
       .optional(),
+    /** M6: fire the held weapon (GDD §11). Intent only: weapon slot, aim
+     *  (carried on the frame), target-independent sequence + client tick —
+     *  never damage or hit confirmation (T09). */
+    fire: z
+      .object({
+        /** the structure to plant a charge on (explosives); optional */
+        targetEntityId: z.string().regex(/^e_[0-9a-f]{4,}$/).optional(),
+        /** magazine reload (firearms) */
+        reload: z.boolean().optional(),
+      })
+      .optional(),
     /** hotbar slot 0..7 selection; the server derives heldItemId from it */
     heldSlot: z.number().int().min(-1).max(35).optional(),
   }),

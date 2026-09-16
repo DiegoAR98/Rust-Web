@@ -8,6 +8,13 @@
  */
 import type { SnapshotProto, ItemStackProto } from "@dustfall/protocol";
 
+export interface ReplicaWeaponState {
+  /** weapon itemId -> loaded round count */
+  loaded: Record<string, number>;
+  /** magazine reload in flight (null when idle) */
+  reloading: { weaponItemId: string; completesAtTick: number } | null;
+}
+
 export interface ReplicaPlayer {
   entityId: string;
   /** stable player id (matches the session grant's playerId) */
@@ -31,6 +38,8 @@ export interface ReplicaPlayer {
   handCraft: { recipeId: string; completesAtTick: number } | null;
   /** M5: accumulated radiation (own deltas only) */
   radiation: number;
+  /** M6: magazine/reload state (own spawn/delta only) */
+  weapon?: ReplicaWeaponState;
 }
 
 export interface ReplicaNode {
@@ -61,6 +70,24 @@ export interface ReplicaAnimal {
   contentId: string;
   hp: number;
   maxHp: number;
+}
+
+/** M6: a live bow arrow in flight */
+export interface ReplicaProjectile {
+  entityId: string;
+  x: number;
+  y: number;
+  z: number;
+  contentId: string;
+}
+
+/** M6: an armed explosive (grenade mid-air / planted charge) */
+export interface ReplicaFuse {
+  entityId: string;
+  x: number;
+  y: number;
+  z: number;
+  contentId: string;
 }
 
 export interface ReplicaGround {
@@ -101,6 +128,9 @@ export class Replica {
   readonly ground = new Map<string, ReplicaGround>();
   readonly structures = new Map<string, ReplicaStructure>();
   readonly animals = new Map<string, ReplicaAnimal>();
+  /** M6: live projectiles + armed fuses */
+  readonly projectiles = new Map<string, ReplicaProjectile>();
+  readonly fuses = new Map<string, ReplicaFuse>();
   /** events since the last time the UI drained them */
   private pendingEvents: ReplicaEvent[] = [];
   serverTick = 0;
@@ -139,6 +169,8 @@ export class Replica {
         this.ground.delete(rec.entityId);
         this.structures.delete(rec.entityId);
         this.animals.delete(rec.entityId);
+        this.projectiles.delete(rec.entityId);
+        this.fuses.delete(rec.entityId);
       }
     }
   }
@@ -161,6 +193,10 @@ export class Replica {
         handCraft: rec.handCraft ?? null,
         radiation: rec.radiation ?? 0,
       });
+      if (rec.weapon) {
+        const pl = this.players.get(rec.entityId)!;
+        pl.weapon = { loaded: rec.weapon.loaded ?? {}, reloading: rec.weapon.reloading ?? null };
+      }
     } else if (rec.kindTag === "animal") {
       this.animals.set(rec.entityId, {
         entityId: rec.entityId,
@@ -213,6 +249,22 @@ export class Replica {
         storage: rec.storage ?? [],
         craft: rec.craft ?? null,
       });
+    } else if (rec.kindTag === "projectile") {
+      this.projectiles.set(rec.entityId, {
+        entityId: rec.entityId,
+        contentId: rec.contentId ?? "arrow",
+        x: pos.x,
+        y: pos.y,
+        z: pos.z,
+      });
+    } else if (rec.kindTag === "fuse") {
+      this.fuses.set(rec.entityId, {
+        entityId: rec.entityId,
+        contentId: rec.contentId ?? "hand_grenade",
+        x: pos.x,
+        y: pos.y,
+        z: pos.z,
+      });
     }
   }
 
@@ -237,6 +289,10 @@ export class Replica {
       if (rec.radiation !== undefined) {
         p.radiation = rec.radiation;
         this.radiation = rec.radiation; // own delta carries the local player's rads
+      }
+      if (rec.weapon) {
+        // M6: authoritative ammo/reload (explicit null clears a finished reload)
+        p.weapon = { loaded: rec.weapon.loaded ?? {}, reloading: rec.weapon.reloading ?? null };
       }
       return;
     }
@@ -294,6 +350,19 @@ export class Replica {
       if (rec.craft) st.craft = rec.craft;
       else st.craft = null; // explicit clear when the station goes idle
       return;
+    }
+    const pr = this.projectiles.get(rec.entityId);
+    if (pr && rec.position) {
+      pr.x = rec.position.x;
+      pr.y = rec.position.y;
+      pr.z = rec.position.z;
+      return;
+    }
+    const fu = this.fuses.get(rec.entityId);
+    if (fu && rec.position) {
+      fu.x = rec.position.x;
+      fu.y = rec.position.y;
+      fu.z = rec.position.z;
     }
   }
 }

@@ -79,4 +79,15 @@ export const TUNING: TuningDef = {
   "animal.spawn_max_players_m": 60, // prefer to spawn within this of a player
   "animal.active_cap": 8, // no more than eight animals active at once
   "animal.despawn_idle_seconds": 420, // 7 real-min: despawn when far + untargeted
+  // M6: combat (GDD §11) — zone multipliers, rewind window, lag-comp fairness.
+  "combat.head_multiplier": 1.5,
+  "combat.limb_multiplier": 0.75,
+  "combat.max_armor_reduction": 0.6,
+  "combat.melee_reach_m": 1.5,
+  "combat.melee_arc_degrees": 90, // forward cone the sphere check covers
+  "combat.history_ticks": 20, // position history kept for rewind
+  "combat.max_aim_delta_degrees": 60, // per-tick yaw/pitch delta sanity cap
+  "combat.bow_arrow_life_ticks": 600, // 20 s: arrows despawn when uncollected
+  "combat.explosive_block_m": 1.0, // no self-detonation inside this radius
+  "combat.medical_cooldown_ticks": 300, // 10 s between consumable channels
 };

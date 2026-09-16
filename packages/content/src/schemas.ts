@@ -60,6 +60,25 @@ export const weaponSchema = z.object({
   /** seconds between shots; 0 for instant weapons */
   fireIntervalTicks: z.number().int().nonnegative(),
   magazineSize: z.number().int().nonnegative(),
+  /** M6: the ammo item this weapon consumes per shot/bolt (bow=arrow, firearms=round). 0-magazine (melee/explosive) may omit. */
+  ammoItemId: itemIdSchema.optional(),
+  // ---- M6 (GDD §11): ranged + explosive mechanics ----
+  /** firearm: ticks a full reload takes */
+  reloadTicks: z.number().int().nonnegative().optional(),
+  /** firearm: aim cone (degrees) — spread/bloom rolled on the combat RNG */
+  spreadDegrees: z.number().nonnegative().optional(),
+  /** bow: projectile speed in cm/s (gravity applies; recoverable on terrain) */
+  projectileSpeedCmS: z.number().positive().optional(),
+  /** firearm: pellet count for a shot (shotgun > 1; 1 for single-projectile) */
+  pellets: z.number().int().min(1).max(8).optional(),
+  /** explosive: fuse length in ticks before detonation */
+  fuseTicks: z.number().int().positive().optional(),
+  /** explosive: structure splash radius in meters (center piece takes full damage) */
+  splashRadiusM: z.number().nonnegative().optional(),
+  /** explosive: flat structure damage to the planted/target piece */
+  structureDamage: z.number().nonnegative().optional(),
+  /** explosive: flat character damage inside the splash radius */
+  characterDamage: z.number().nonnegative().optional(),
 });
 
 export const armorSchema = z.object({

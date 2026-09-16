@@ -20,6 +20,7 @@ import {
   spawnWildlife,
   advanceWildlife,
   hitAnimal,
+  PositionHistory,
   type PlayerEntity,
   type AnimalEntity,
 } from "@dustfall/sim";
@@ -234,8 +235,9 @@ describe("M5 wildlife (GDD §12)", () => {
       state: "idle",
       lastAggroTick: 0,
       wander: { x: 1, z: 0 },
-      home: { x: p.position.x + 50, y: 0, z: p.position.z },
+      home: { x: p.position.x, y: 0, z: p.position.z },
       dying: false,
+      poseHistory: new PositionHistory(),
     };
     store.insert(rabbit);
 

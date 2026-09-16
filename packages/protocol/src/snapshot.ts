@@ -10,10 +10,25 @@ export const ItemStackSchema = z.object({
 });
 export type ItemStackProto = z.infer<typeof ItemStackSchema>;
 
+/** M6: magazine + reload state for the held weapons the client knows about. */
+export const WeaponStateSchema = z.object({
+  /** weapon itemId -> loaded round count */
+  loaded: z.record(z.number().int().min(0).max(64)).optional(),
+  /** magazine reload in flight (null when idle) */
+  reloading: z
+    .object({
+      weaponItemId: z.string().min(2).max(64),
+      completesAtTick: z.number().int().nonnegative(),
+    })
+    .nullable()
+    .optional(),
+});
+export type WeaponStateProto = z.infer<typeof WeaponStateSchema>;
+
 export const SpawnRecordSchema = z.object({
   kind: z.literal("spawn"),
   entityId: z.string().regex(/^e_[0-9a-f]{4,}$/),
-  kindTag: z.enum(["player", "world", "corpse", "ground_item", "structure", "animal"]),
+  kindTag: z.enum(["player", "world", "corpse", "ground_item", "structure", "animal", "projectile", "fuse"]),
   position: z.object({ x: z.number().int(), y: z.number().int(), z: z.number().int() }),
   contentId: z.string().optional(),
   /** M2: node pool / accumulator / respawn for world entities */
@@ -55,6 +70,8 @@ export const SpawnRecordSchema = z.object({
       completesAtTick: z.number().int().nonnegative(),
     })
     .optional(),
+  /** M6: the player's live weapon state (own spawn/delta only, GDD §11) */
+  weapon: WeaponStateSchema.optional(),
 });
 
 export const DeltaRecordSchema = z.object({
@@ -100,6 +117,8 @@ export const DeltaRecordSchema = z.object({
       completesAtTick: z.number().int().nonnegative(),
     })
     .optional(),
+  /** M6: the owner's live weapon state (own deltas only; null clears) */
+  weapon: WeaponStateSchema.nullable().optional(),
 });
 
 export const EventRecordSchema = z.object({
@@ -127,6 +146,12 @@ export const EventRecordSchema = z.object({
     "channel_done",
     "animal_hit",
     "animal_death",
+    // M6 authoritative events (GDD §11): hit markers, kills, broken doors,
+    // ammo counts — the client plays these only when they arrive
+    "combat_hit",
+    "fire_rejected",
+    "detonation",
+    "weapon_reload_done",
   ]),
   payload: z.record(z.unknown()).default({}),
 });

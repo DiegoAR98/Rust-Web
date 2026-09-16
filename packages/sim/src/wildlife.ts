@@ -14,6 +14,7 @@
  * - Animals despawn when far from every player AND untargeted for a while.
  */
 import { ANIMALS, ANIMAL_BY_KIND, TUNING, type AnimalKind } from "@dustfall/content";
+import { PositionHistory } from "./hitbox.js";
 import { Rng, SUBSYSTEM } from "./rng.js";
 import type { EntityStore, AnimalEntity, PlayerEntity } from "./entities.js";
 import type { World } from "./world.js";
@@ -99,6 +100,7 @@ const makeAnimal = (world: World, store: EntityStore, kind: AnimalKind, pos: { x
     wander: rollWander(world, store),
     home: { ...home },
     dying: false,
+    poseHistory: new PositionHistory(),
   };
   store.insert(a);
   return a.id;
@@ -250,6 +252,7 @@ export const advanceWildlife = (world: World, store: EntityStore): string[] => {
     }
     a.position.x += mx;
     a.position.z += mz;
+    a.poseHistory.record(world.clock.tick, a.position); // M6: rewind window
 
     // despawn: far from every player AND idle
     if (players.length > 0 && a.state === "idle") {

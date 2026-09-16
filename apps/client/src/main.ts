@@ -38,6 +38,9 @@ const groundItemMeshes = new Map<string, THREE.Mesh>();
 const structureMeshes = new Map<string, THREE.Group>();
 const structureHealthBars = new Map<string, THREE.Mesh>();
 const animalMeshes = new Map<string, THREE.Mesh>();
+// M6: live arrows + armed fuses
+const projectileMeshes = new Map<string, THREE.Mesh>();
+const fuseMeshes = new Map<string, THREE.Mesh>();
 
 // ---- UI elements ----
 const hud = document.getElementById("hud")!;
@@ -91,6 +94,49 @@ document.addEventListener("mousemove", (e) => {
   if (!locked) return;
   yaw -= e.movementX * 0.002;
   pitch = Math.max(-Math.PI / 2 + 0.05, Math.min(Math.PI / 2 - 0.05, pitch - e.movementY * 0.002));
+});
+
+// M6: combat input (GDD §11). LMB fires the held weapon (intent only: aim
+// rides the frame, the server resolves the shot — T09). R starts a magazine
+// reload. Explosives: a structure near the crosshair gets the charge planted;
+// otherwise the grenade is thrown along the aim.
+let lastFireMs = 0;
+const fireHeld = (): void => {
+  const now = performance.now();
+  if (now - lastFireMs < 120) return; // local debounce; the server enforces cadence
+  lastFireMs = now;
+  const myP = myEntity ? replica.players.get(myEntity) : undefined;
+  const held = myP?.inventory?.[heldSlot];
+  if (!held) return;
+  const def = ITEMS.find((i) => i.id === held.itemId);
+  const w = def?.weapon;
+  if (!w) return; // tools/gathering use the swing path instead
+  let targetEntityId: string | undefined;
+  if (w.kind === "explosive") {
+    // plant the charge on the nearest structure in aim direction within 6 m
+    const pt = crosshairGround();
+    if (pt) {
+      const myPos = myP?.x ?? 0;
+      const myZ = myP?.z ?? 0;
+      let best: string | null = null;
+      let bestD = 600 * 600;
+      for (const s of replica.structures.values()) {
+        const d = sq(s.x, pt.x) + sq(s.z, pt.z);
+        if (d < bestD && sq(s.x, myPos) + sq(s.z, myZ) <= 800 * 800) {
+          bestD = d;
+          best = s.entityId;
+        }
+      }
+      if (best) targetEntityId = best;
+    }
+  }
+  const fireOpts: { targetEntityId?: string } = {};
+  if (targetEntityId !== undefined) fireOpts.targetEntityId = targetEntityId;
+  socket.send({ ...moveFrame(), heldSlot, fire: fireOpts });
+};
+renderer.domElement.addEventListener("mousedown", (e) => {
+  if (ui.placing || ui.inventoryOpen || ui.craftOpen || ui.dead) return;
+  if (e.button === 0 && locked) fireHeld();
 });
 
 const label = (id: string): string => id;
@@ -417,6 +463,14 @@ const onM3Events = (): void => {
       if (ev.payload.killed === true) msg = "Prey killed — loot dropped";
     } else if (ev.event === "structure_destroyed") {
       msg = "Structure destroyed";
+    } else if (ev.event === "combat_hit" && pid && (ev.payload.shooterId === pid || ev.payload.targetPlayerId === pid)) {
+      // M6: authoritative hit marker (GDD §11 feedback: no damage numbers)
+      const me = ev.payload.targetPlayerId === pid;
+      if (ev.payload.killed === true) msg = me ? "You were downed" : "Enemy downed";
+      else msg = me ? "Hit taken" : "Hit confirmed";
+    } else if (ev.event === "detonation" && pid && ev.payload.ownerId === pid) {
+      const structures = (ev.payload.structures as unknown[]) ?? [];
+      msg = structures.length > 0 ? "Charge detonated" : "Grenade detonated";
     }
   }
   if (msg) flashNotice(msg);
@@ -646,6 +700,14 @@ window.addEventListener("keydown", (e) => {
   if ((e.key === "e" || e.key === "E" || e.key === "f" || e.key === "F") && !ui.dead && !ui.inventoryOpen) interact();
   if ((e.key === "c" || e.key === "C") && !ui.dead) toggleCraftPanel();
   if ((e.key === "u" || e.key === "U") && !ui.dead) useChannelFromSlot(heldSlot); // M5: use held food/med
+  if ((e.key === "r" || e.key === "R") && !ui.dead) {
+    // M6: start a magazine reload for the held firearm (the server refuses
+    // when the mag is full or there is no ammo)
+    const myP = myEntity ? replica.players.get(myEntity) : undefined;
+    const held = myP?.inventory?.[heldSlot];
+    const def = held ? ITEMS.find((i) => i.id === held.itemId) : undefined;
+    if (def?.weapon?.kind === "firearm") socket.send({ ...moveFrame(), heldSlot, fire: { reload: true } });
+  }
   if (e.key === "Escape" && ui.placing) cancelPlacement();
 });
 window.addEventListener("keyup", (e) => keys.delete(e.code));
@@ -771,6 +833,35 @@ const syncMeshes = (): void => {
   for (const [id, m] of animalMeshes) if (!replica.animals.has(id)) {
     scene.remove(m);
     animalMeshes.delete(id);
+  }
+  // M6: bow arrows (thin tracers) + armed fuses (pulsing marker)
+  for (const [id, pr] of replica.projectiles) {
+    let m = projectileMeshes.get(id);
+    if (!m) {
+      m = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.08, 0.7), new THREE.MeshBasicMaterial({ color: 0xe8dcc0 }));
+      scene.add(m);
+      projectileMeshes.set(id, m);
+    }
+    m.position.set(pr.x / 100, 0.5 + pr.y / 100, pr.z / 100);
+  }
+  for (const [id, m] of projectileMeshes) if (!replica.projectiles.has(id)) {
+    scene.remove(m);
+    projectileMeshes.delete(id);
+  }
+  for (const [id, fu] of replica.fuses) {
+    let m = fuseMeshes.get(id);
+    if (!m) {
+      m = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.3, 0.3), new THREE.MeshLambertMaterial({ color: 0xb03020, emissive: 0x601000 }));
+      scene.add(m);
+      fuseMeshes.set(id, m);
+    }
+    const t = performance.now() / 250;
+    (m.material as THREE.MeshLambertMaterial).emissive.setHSL(0.02, 0.9, 0.25 + 0.2 * Math.abs(Math.sin(t)));
+    m.position.set(fu.x / 100, 0.2 + fu.y / 100, fu.z / 100);
+  }
+  for (const [id, m] of fuseMeshes) if (!replica.fuses.has(id)) {
+    scene.remove(m);
+    fuseMeshes.delete(id);
   }
   // M3 structures: simple colored boxes per content type + a craft-progress tint
   // M4: integrity bar when damaged + wall/door/barricade shapes
@@ -917,13 +1008,28 @@ renderer.setAnimationLoop(() => {
     const cal = mine.calories;
     const rads = replica.radiation;
     const heldStack = mine.inventory?.[heldSlot];
+    // M6: authoritative ammo count + reload countdown (GDD §11 feedback)
+    let weaponLine = "";
+    const heldDef = heldStack ? ITEMS.find((i) => i.id === heldStack.itemId) : undefined;
+    if (heldStack && heldDef?.weapon) {
+      if (mine.weapon?.reloading) {
+        const remain = Math.max(0, mine.weapon.reloading.completesAtTick - replica.serverTick);
+        weaponLine = `reloading ${Math.ceil(remain / 30)}s…<br>`;
+      } else if (heldDef.weapon.kind === "firearm") {
+        const loaded = mine.weapon?.loaded?.[heldStack.itemId] ?? 0;
+        weaponLine = `ammo ${loaded}/${heldDef.weapon.magazineSize}  (R reload)<br>`;
+      } else if (heldDef.weapon.kind === "bow") {
+        weaponLine = `arrows x${heldStack.quantity}<br>`;
+      }
+    }
     const weatherLabel: Record<string, string> = { clear: "clear", overcast: "overcast", rain: "rain", fog: "fog", dry_wind: "dry wind" };
     hud.innerHTML =
       `tick ${replica.serverTick} | ${weatherLabel[replica.weather] ?? replica.weather} | pos ${s.x.toFixed(1)},${s.y.toFixed(1)},${s.z.toFixed(1)}<br>` +
       `health <span class="bar"><div style="width:${hp}%;background:#a33"></div></span> ${Math.round(hp)}<br>` +
       `calories <span class="bar"><div style="width:${(cal / 3000) * 100}%;background:#b98"></div></span> ${Math.round(cal)}<br>` +
       `radiation <span class="bar"><div style="width:${(rads / 500) * 100}%;background:${rads >= 400 ? "#f30" : rads >= 200 ? "#c80" : "#093"}"></div></span> ${rads.toFixed(0)}/500<br>` +
-      (heldStack ? `held: ${label(heldStack.itemId)} x${heldStack.quantity}` : "held: —");
+      (heldStack ? `held: ${label(heldStack.itemId)} x${heldStack.quantity}` : "held: —") +
+      (weaponLine ? `<br>${weaponLine}` : "");
   }
 
   for (const [id, p] of replica.players) {

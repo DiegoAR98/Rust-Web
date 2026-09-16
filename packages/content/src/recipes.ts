@@ -200,4 +200,231 @@ export const RECIPES: readonly RecipeDef[] = [
     station: "furnace",
     timeTicks: 180, // 6 s
   },
+  // ---- M6 combat (GDD §11 + Appendix B): ammo, explosives, weapons, armor ----
+  // The GDD specifies the damage formula + falloff shape, not per-weapon
+  // numbers; these rows are the authored vertical-slice values (single data
+  // owner: this file), all cross-validated against items.ts.
+  {
+    id: "recipe_hand_cannon",
+    outputItemId: "hand_cannon",
+    outputQuantity: 1,
+    inputs: [
+      { itemId: "wood", quantity: 3 },
+      { itemId: "metal_fragments", quantity: 4 },
+      { itemId: "cloth", quantity: 1 },
+    ],
+    station: "workbench",
+    timeTicks: 600, // 20 s
+  },
+  {
+    id: "recipe_handmade_shell",
+    outputItemId: "handmade_shell",
+    outputQuantity: 1,
+    inputs: [
+      { itemId: "gunpowder", quantity: 1 },
+      { itemId: "metal_fragments", quantity: 1 },
+    ],
+    station: "hand",
+    timeTicks: 60, // 2 s
+  },
+  {
+    id: "recipe_nine_mm_pistol",
+    outputItemId: "nine_mm_pistol",
+    outputQuantity: 1,
+    inputs: [
+      { itemId: "metal_fragments", quantity: 5 },
+      { itemId: "wood", quantity: 2 },
+      { itemId: "cloth", quantity: 1 },
+    ],
+    station: "workbench",
+    timeTicks: 720, // 24 s
+  },
+  {
+    id: "recipe_nine_mm_round",
+    outputItemId: "nine_mm_round",
+    outputQuantity: 4,
+    inputs: [
+      { itemId: "gunpowder", quantity: 1 },
+      { itemId: "metal_fragments", quantity: 1 },
+    ],
+    station: "hand",
+    timeTicks: 90, // 3 s
+  },
+  {
+    id: "recipe_pipe_shotgun",
+    outputItemId: "pipe_shotgun",
+    outputQuantity: 1,
+    inputs: [
+      { itemId: "wood", quantity: 3 },
+      { itemId: "metal_fragments", quantity: 6 },
+      { itemId: "cloth", quantity: 1 },
+    ],
+    station: "workbench",
+    timeTicks: 720, // 24 s
+  },
+  {
+    id: "recipe_shotgun_shell",
+    outputItemId: "shotgun_shell",
+    outputQuantity: 1,
+    inputs: [
+      { itemId: "gunpowder", quantity: 2 },
+      { itemId: "metal_fragments", quantity: 1 },
+      { itemId: "cloth", quantity: 1 },
+    ],
+    station: "hand",
+    timeTicks: 90, // 3 s
+  },
+  {
+    id: "recipe_explosives",
+    outputItemId: "explosives",
+    outputQuantity: 1,
+    inputs: [
+      { itemId: "gunpowder", quantity: 4 },
+      { itemId: "metal_fragments", quantity: 1 },
+    ],
+    station: "hand",
+    timeTicks: 150, // 5 s
+  },
+  {
+    id: "recipe_hand_grenade",
+    outputItemId: "hand_grenade",
+    outputQuantity: 1,
+    inputs: [
+      { itemId: "explosives", quantity: 2 },
+      { itemId: "metal_fragments", quantity: 1 },
+    ],
+    station: "hand",
+    timeTicks: 180, // 6 s
+  },
+  {
+    id: "recipe_explosive_charge",
+    outputItemId: "explosive_charge",
+    outputQuantity: 1,
+    inputs: [
+      { itemId: "explosives", quantity: 3 },
+      { itemId: "metal_fragments", quantity: 1 },
+      { itemId: "cloth", quantity: 1 },
+    ],
+    station: "workbench",
+    timeTicks: 240, // 8 s
+    requiresBlueprint: "bp_explosive_charge",
+  },
+  {
+    id: "recipe_assault_rifle",
+    outputItemId: "assault_rifle",
+    outputQuantity: 1,
+    inputs: [
+      { itemId: "metal_fragments", quantity: 8 },
+      { itemId: "wood", quantity: 4 },
+      { itemId: "cloth", quantity: 2 },
+    ],
+    station: "workbench",
+    timeTicks: 900, // 30 s
+    requiresBlueprint: "bp_assault_rifle",
+  },
+  {
+    id: "recipe_bolt_action_rifle",
+    outputItemId: "bolt_action_rifle",
+    outputQuantity: 1,
+    inputs: [
+      { itemId: "metal_fragments", quantity: 10 },
+      { itemId: "wood", quantity: 6 },
+      { itemId: "cloth", quantity: 2 },
+    ],
+    station: "workbench",
+    timeTicks: 1200, // 40 s
+    requiresBlueprint: "bp_bolt_action_rifle",
+  },
+  {
+    id: "recipe_rifle_round",
+    outputItemId: "rifle_round",
+    outputQuantity: 2,
+    inputs: [
+      { itemId: "gunpowder", quantity: 1 },
+      { itemId: "metal_fragments", quantity: 1 },
+      { itemId: "explosives", quantity: 1 },
+    ],
+    station: "hand",
+    timeTicks: 120, // 4 s
+  },
+  {
+    id: "recipe_leather_helmet",
+    outputItemId: "leather_helmet",
+    outputQuantity: 1,
+    inputs: [{ itemId: "leather", quantity: 3 }],
+    station: "hand",
+    timeTicks: 300, // 10 s
+  },
+  {
+    id: "recipe_leather_vest",
+    outputItemId: "leather_vest",
+    outputQuantity: 1,
+    inputs: [{ itemId: "leather", quantity: 5 }],
+    station: "hand",
+    timeTicks: 420, // 14 s
+  },
+  {
+    id: "recipe_leather_pants",
+    outputItemId: "leather_pants",
+    outputQuantity: 1,
+    inputs: [{ itemId: "leather", quantity: 4 }],
+    station: "hand",
+    timeTicks: 360, // 12 s
+  },
+  {
+    id: "recipe_leather_boots",
+    outputItemId: "leather_boots",
+    outputQuantity: 1,
+    inputs: [{ itemId: "leather", quantity: 2 }],
+    station: "hand",
+    timeTicks: 180, // 6 s
+  },
+  {
+    id: "recipe_ballistic_helmet",
+    outputItemId: "ballistic_helmet",
+    outputQuantity: 1,
+    inputs: [
+      { itemId: "leather", quantity: 2 },
+      { itemId: "metal_fragments", quantity: 3 },
+    ],
+    station: "workbench",
+    timeTicks: 600, // 20 s
+    requiresBlueprint: "bp_ballistic_helmet",
+  },
+  {
+    id: "recipe_ballistic_vest",
+    outputItemId: "ballistic_vest",
+    outputQuantity: 1,
+    inputs: [
+      { itemId: "leather", quantity: 3 },
+      { itemId: "metal_fragments", quantity: 4 },
+    ],
+    station: "workbench",
+    timeTicks: 720, // 24 s
+    requiresBlueprint: "bp_ballistic_vest",
+  },
+  {
+    id: "recipe_ballistic_pants",
+    outputItemId: "ballistic_pants",
+    outputQuantity: 1,
+    inputs: [
+      { itemId: "leather", quantity: 2 },
+      { itemId: "metal_fragments", quantity: 3 },
+    ],
+    station: "workbench",
+    timeTicks: 600, // 20 s
+    requiresBlueprint: "bp_ballistic_pants",
+  },
+  {
+    id: "recipe_ballistic_boots",
+    outputItemId: "ballistic_boots",
+    outputQuantity: 1,
+    inputs: [
+      { itemId: "leather", quantity: 1 },
+      { itemId: "metal_fragments", quantity: 2 },
+    ],
+    station: "workbench",
+    timeTicks: 480, // 16 s
+    requiresBlueprint: "bp_ballistic_boots",
+  },
 ];

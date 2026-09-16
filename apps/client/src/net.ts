@@ -203,6 +203,8 @@ export class GameSocket {
     rest?: { structureEntityId: string };
     /** M5: start a food/med channel from a grid slot */
     channel?: { slot: number; kind: "food" | "bandage" | "medkit" | "antirad" };
+    /** M6: fire the held weapon (intent only: aim rides the frame; T09) */
+    fire?: { targetEntityId?: string; reload?: boolean };
     heldSlot?: number;
   }): void {
     if (this.ws.readyState !== WebSocket.OPEN || !this.grant) return;

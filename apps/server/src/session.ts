@@ -39,6 +39,13 @@ export interface Session {
   seen: Set<string>;
   /** the baseline id this session received (acked in the baseline ack) */
   baselineId: number;
+  /**
+   * M6: per-client aim ring for lag compensation (GDD §11): maps the
+   * client's acknowledged tick to the aim (yaw/pitch) the server observed.
+   * A shot resolves against the pose at the shooter's client tick, clamped
+   * to this window; impossible aim deltas are rejected (T19).
+   */
+  aimHistory: import("@dustfall/sim").AimHistory;
 }
 
 export class SessionRegistry {

@@ -8,7 +8,7 @@
  */
 import { randomBytes } from "node:crypto";
 import { createWorld, runTick, placeWorldNodes, commitDeath, type World, type TickCommand, type TickEvents } from "@dustfall/sim";
-import { EntityStore, newPlayer, type PlayerEntity, type WorldEntity, type CorpseEntity, type GroundItemEntity, type AnimalEntity } from "@dustfall/sim";
+import { EntityStore, newPlayer, AimHistory, type PlayerEntity, type WorldEntity, type CorpseEntity, type GroundItemEntity, type AnimalEntity, type ProjectileEntity, type FuseEntity } from "@dustfall/sim";
 import type { PlayerId, ItemId, EntityId } from "@dustfall/contracts";
 import {
   ClientEnvelopeSchema,
@@ -17,7 +17,7 @@ import {
 } from "@dustfall/protocol";
 import { encode } from "@msgpack/msgpack";
 import { BACKPRESSURE_QUEUE_BYTES, BACKPRESSURE_WINDOW_S } from "@dustfall/protocol";
-import { REGIONS } from "@dustfall/content";
+import { REGIONS, TUNING } from "@dustfall/content";
 import { freshVitals } from "@dustfall/contracts";
 import { SessionRegistry } from "./session.js";
 import { derivePlayerId, freshNonce, verifyProof, issueSessionToken } from "./identity.js";
@@ -54,6 +54,17 @@ export class Host {
   private readonly nodeSeen = new Map<string, NodeSnapshot>();
   /** entity id -> last-sent structure signature (hp + storage + craft) */
   private readonly structureSeen = new Map<string, string>();
+  /** M6: per-player weapon-state signature (ammo/reload) for delta gating */
+  private readonly weaponSeen = new Map<string, string>();
+
+  private weaponSigOf(p: PlayerEntity): string {
+    const loaded = Object.entries(p.weapon.loadedByItemId)
+      .map(([k, v]) => `${k}:${v}`)
+      .sort()
+      .join("|");
+    const reloading = p.weapon.reloading ? `${p.weapon.reloading.weaponItemId}@${p.weapon.reloading.completesAtTick}` : "";
+    return `${loaded}#${reloading}`;
+  }
   /** entities sent to at least one ready session (new ones need a spawn record) */
   private readonly globalSent = new Set<string>();
   /** events awaiting forwarding (batches only fire on odd ticks; no tick's events may be dropped, §21.7) */
@@ -105,6 +116,7 @@ export class Host {
       connectedAtMs: Date.now(),
       seen: new Set<string>(),
       baselineId: 0,
+      aimHistory: new AimHistory(),
     });
     return { sessionId, nonce };
   }
@@ -192,7 +204,7 @@ export class Host {
     p.dead = true;
     const tx = commitDeath(this.world, this.store, p);
     if (tx) {
-      this.pendingEvents.push({ moved: [], died: [playerId], gathered: [], deaths: [tx], respawnedNodes: [], despawnedGround: [], inventory: [], crafted: [], researched: [], placed: [], attacked: [], destroyed: [], animalsSpawned: [], animalsDespawned: [], animalHits: [], channels: [] });
+      this.pendingEvents.push({ moved: [], died: [playerId], gathered: [], deaths: [tx], respawnedNodes: [], despawnedGround: [], inventory: [], crafted: [], researched: [], placed: [], attacked: [], destroyed: [], animalsSpawned: [], animalsDespawned: [], animalHits: [], channels: [], combatHits: [], fireRejected: [], weaponReloads: [], detonations: [] });
       for (const h of this.deathHooks) h();
     }
     return tx?.corpseEntityId ?? null;
@@ -297,6 +309,32 @@ export class Host {
           if (cmd.rest) intent.rest = cmd.rest;
           // M5 intent
           if (cmd.channel) intent.channel = { slot: cmd.channel.slot, kind: cmd.channel.kind };
+          // M6 intent: weapon fire (GDD §11). The envelope carries clientTick
+          // (the shooter's acknowledged tick) and the aim observed with this
+          // frame; the host records the aim per client tick and resolves the
+          // shot against the newest pose at-or-before it. T19: future client
+          // ticks and impossible aim deltas are rejected before the sim sees
+          // them.
+          if (cmd.fire) {
+            const clientTick = env.clientTick;
+            // T19: reject impossible aim deltas (yaw/pitch jumped more than
+            // the per-tick cap since the last observed frame).
+            const maxDeltaHundredths = Number(TUNING["combat.max_aim_delta_degrees"] ?? 60) * 100;
+            const lastAim = session.aimHistory.last();
+            const sane = !lastAim || Math.abs(cmd.yawHundredths - lastAim.yawHundredths) <= maxDeltaHundredths;
+            let aimOut: { serverTick: number; yawHundredths: number; pitchHundredths: number } | null = null;
+            if (clientTick <= this.world.clock.tick && sane) {
+              session.aimHistory.record(clientTick, this.world.clock.tick, cmd.yawHundredths, cmd.pitchHundredths);
+              const observed = session.aimHistory.atOrBefore(clientTick);
+              if (observed && this.world.clock.tick - observed.serverTick <= 20) {
+                aimOut = observed;
+              }
+            }
+            const fireOpts: { targetEntityId?: string; reload?: boolean } = {};
+            if (cmd.fire.targetEntityId !== undefined) fireOpts.targetEntityId = cmd.fire.targetEntityId;
+            if (cmd.fire.reload !== undefined) fireOpts.reload = cmd.fire.reload;
+            intent.fire = { clientTick, aim: aimOut, ...fireOpts };
+          }
           if (cmd.heldSlot !== undefined && p) {
             intent.heldItemId = p.inventory[cmd.heldSlot]?.itemId ?? null;
           }
@@ -434,6 +472,25 @@ export class Host {
             hp: a.hp,
           });
         }
+      } else if (e.kind === "projectile" || e.kind === "fuse") {
+        // M6: live arrows / armed fuses — thin wire records; the client draws
+        // a small tracer and detonation markers from these.
+        const pf = e as ProjectileEntity | FuseEntity;
+        if (!this.globalSent.has(e.id)) {
+          records.push({
+            kind: "spawn",
+            entityId: e.id,
+            kindTag: pf.kind,
+            contentId: pf.contentId,
+            position: { x: Math.round(pf.position.x), y: Math.round(pf.position.y), z: Math.round(pf.position.z) },
+          });
+        } else if (pf.kind === "projectile") {
+          records.push({
+            kind: "delta",
+            entityId: e.id,
+            position: { x: Math.round(pf.position.x), y: Math.round(pf.position.y), z: Math.round(pf.position.z) },
+          });
+        }
       }
       this.globalSent.add(e.id);
     }
@@ -511,6 +568,33 @@ export class Host {
         records.push({ kind: "event", entityId: did, event: "animal_death", payload: { entityId: did } });
         records.push({ kind: "forget", entityId: did });
       }
+      // M6: authoritative combat feedback (GDD §11): hit markers, kills,
+      // detonations, ammo counts. No damage numbers or kill feed.
+      for (const h of ev.combatHits ?? []) {
+        records.push({
+          kind: "event",
+          entityId: h.targetAnimalId ?? undefined,
+          event: "combat_hit",
+          payload: {
+            shooterId: h.shooterId,
+            targetPlayerId: h.targetPlayerId,
+            targetAnimalId: h.targetAnimalId,
+            damage: h.damage,
+            killed: h.killed,
+            zone: h.zone,
+            weaponItemId: h.weaponItemId,
+          },
+        });
+      }
+      for (const fr of ev.fireRejected ?? []) {
+        records.push({ kind: "event", event: "fire_rejected", payload: { playerId: fr.playerId, reason: fr.reason } });
+      }
+      for (const wr of ev.weaponReloads ?? []) {
+        records.push({ kind: "event", event: "weapon_reload_done", payload: { playerId: wr.playerId, weaponItemId: wr.weaponItemId, loadedAfter: wr.loadedAfter } });
+      }
+      for (const det of ev.detonations ?? []) {
+        records.push({ kind: "event", event: "detonation", payload: { fuseId: det.fuseId, ownerId: det.ownerId, weaponItemId: det.weaponItemId, structures: det.structures } });
+      }
     }
 
     // the shared records are sent to every ready session, but each session's
@@ -541,6 +625,24 @@ export class Host {
           rec.inventory = p.inventory;
           if (p.blueprints.length > 0) rec.blueprints = [...p.blueprints];
           if (p.craft) rec.handCraft = { recipeId: p.craft.recipeId, completesAtTick: p.craft.completesAtTick };
+          // M6: magazine/reload state (ammo counts are authoritative feedback)
+          const wSig = this.weaponSigOf(p);
+          const seenW = this.weaponSeen.get(p.id);
+          if (seenW !== wSig) {
+            rec.weapon = {
+              loaded: Object.keys(p.weapon.loadedByItemId).length > 0 ? { ...p.weapon.loadedByItemId } : undefined,
+              reloading: p.weapon.reloading
+                ? { weaponItemId: p.weapon.reloading.weaponItemId, completesAtTick: p.weapon.reloading.completesAtTick }
+                : null,
+            };
+            this.weaponSeen.set(p.id, wSig);
+          } else if (p.weapon.reloading) {
+            // reload countdown is time-varying: resend so the bar stays live
+            rec.weapon = {
+              loaded: Object.keys(p.weapon.loadedByItemId).length > 0 ? { ...p.weapon.loadedByItemId } : undefined,
+              reloading: { weaponItemId: p.weapon.reloading.weaponItemId, completesAtTick: p.weapon.reloading.completesAtTick },
+            };
+          }
         }
         recs.push(rec);
       }
@@ -592,6 +694,16 @@ export class Host {
           rec.radiation = Math.round(p.vitals.radiation * 10) / 10;
           if (p.blueprints.length > 0) rec.blueprints = p.blueprints;
           if (p.craft) rec.handCraft = { recipeId: p.craft.recipeId, completesAtTick: p.craft.completesAtTick };
+          const wSig = this.weaponSigOf(p);
+          if (wSig !== "#" || p.weapon.reloading) {
+            rec.weapon = {
+              loaded: Object.keys(p.weapon.loadedByItemId).length > 0 ? { ...p.weapon.loadedByItemId } : undefined,
+              reloading: p.weapon.reloading
+                ? { weaponItemId: p.weapon.reloading.weaponItemId, completesAtTick: p.weapon.reloading.completesAtTick }
+                : null,
+            };
+            this.weaponSeen.set(p.id, wSig);
+          }
         }
         records.push(rec);
       } else if (e.kind === "animal") {
@@ -653,6 +765,15 @@ export class Host {
         if (st.craft) rec.craft = st.craft;
         records.push(rec);
         this.structureSeen.set(e.id, structureSig(st));
+      } else if (e.kind === "projectile" || e.kind === "fuse") {
+        const pf = e as ProjectileEntity | FuseEntity;
+        records.push({
+          kind: "spawn",
+          entityId: e.id,
+          kindTag: pf.kind,
+          contentId: pf.contentId,
+          position: { x: Math.round(pf.position.x), y: Math.round(pf.position.y), z: Math.round(pf.position.z) },
+        });
       }
     }
     const snapshot: SnapshotProto = {

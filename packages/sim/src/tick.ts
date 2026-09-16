@@ -43,6 +43,15 @@ import { applyRadiation } from "./radiation.js";
 import { applyWeather, applyCold } from "./environment.js";
 import { startChannel, advanceChannels, cancelChannel } from "./channels.js";
 import { spawnWildlife, advanceWildlife, hitAnimal } from "./wildlife.js";
+import { hitPlayer } from "./melee.js";
+import {
+  resolveFire,
+  advanceWeapons,
+  advanceProjectiles,
+  detonateFuses,
+  type CombatHitEvent,
+  type FireResult,
+} from "./combat.js";
 import type { EntityStore, PlayerEntity } from "./entities.js";
 import type { World } from "./world.js";
 import type { Vec3 } from "@dustfall/contracts";
@@ -72,6 +81,17 @@ export interface TickCommand {
   rest?: { structureEntityId: string };
   /** M5: start a food / med channel from a grid slot */
   channel?: { slot: number; kind: "food" | "bandage" | "medkit" | "antirad" };
+  /**
+   * M6: fire the held weapon (GDD §11). `clientTick` is the shooter's
+   * acknowledged client tick (rewind window, T10/T19); `aim` is the aim pose
+   * resolved against that client tick (host: per-client aim ring).
+   */
+  fire?: {
+    clientTick: number;
+    aim: { serverTick: number; yawHundredths: number; pitchHundredths: number } | null;
+    targetEntityId?: string;
+    reload?: boolean;
+  };
   heldItemId?: string | null;
 }
 
@@ -140,6 +160,19 @@ export interface TickEvents {
     kind: "food" | "bandage" | "medkit" | "antirad";
     itemId: string;
   }>;
+  /** M6: authoritative combat hits (melee / hitscan / projectile / detonation) */
+  combatHits: CombatHitEvent[];
+  /** M6: fire commands rejected by the server (T09/T19: no state mutated) */
+  fireRejected: Array<{ playerId: string; reason: string }>;
+  /** M6: magazine reloads that completed this tick */
+  weaponReloads: Array<{ playerId: string; weaponItemId: string; loadedAfter: number }>;
+  /** M6: detonations this tick (structure splash + character damage) */
+  detonations: Array<{
+    fuseId: string;
+    ownerId: string;
+    weaponItemId: string;
+    structures: { structureEntityId: string; damage: number; hpAfter: number; destroyed: boolean }[];
+  }>;
 }
 
 /**
@@ -152,7 +185,7 @@ export const runTick = (world: World, store: EntityStore, commands: TickCommand[
     return a.sequence - b.sequence;
   });
 
-  const events: TickEvents = { moved: [], died: [], gathered: [], deaths: [], respawnedNodes: [], despawnedGround: [], inventory: [], crafted: [], researched: [], placed: [], attacked: [], destroyed: [], animalsSpawned: [], animalsDespawned: [], animalHits: [], channels: [] };
+  const events: TickEvents = { moved: [], died: [], gathered: [], deaths: [], respawnedNodes: [], despawnedGround: [], inventory: [], crafted: [], researched: [], placed: [], attacked: [], destroyed: [], animalsSpawned: [], animalsDespawned: [], animalHits: [], channels: [], combatHits: [], fireRejected: [], weaponReloads: [], detonations: [] };
 
   // group by player; the last command is the authoritative movement frame
   const byPlayer = new Map<string, TickCommand[]>();
@@ -205,6 +238,33 @@ export const runTick = (world: World, store: EntityStore, commands: TickCommand[
               animalEntityId: cmd.swing.targetEntityId,
               damage: hr.damage,
               killed: hr.killed,
+            });
+            events.combatHits.push({
+              shooterId: p.playerId,
+              targetPlayerId: undefined,
+              targetAnimalId: cmd.swing.targetEntityId,
+              damage: hr.damage,
+              killed: hr.killed,
+              zone: "torso",
+              weaponItemId: "melee",
+            });
+          }
+        } else if (swingTarget && swingTarget.kind === "player") {
+          // M6: PVP melee (GDD §11). Reach + cooldown come from the gather
+          // tuning; damage mirrors hitAnimal so melee is consistent.
+          const held = p.heldItemId ? p.inventory.find((s) => s !== null && s !== undefined && s.itemId === p.heldItemId) : undefined;
+          const toolDef = held ? ITEMS.find((i) => i.id === held.itemId) : undefined;
+          const mult = toolDef?.tool?.toolMultiplier ?? 0.5; // bare hands
+          const hr = hitPlayer(world, store, p, (swingTarget as import("./entities.js").PlayerEntity).playerId, mult);
+          if (hr.ok) {
+            events.combatHits.push({
+              shooterId: p.playerId,
+              targetPlayerId: (swingTarget as import("./entities.js").PlayerEntity).playerId,
+              targetAnimalId: undefined,
+              damage: hr.damage,
+              killed: hr.killed,
+              zone: "torso",
+              weaponItemId: "melee",
             });
           }
         } else {
@@ -305,6 +365,22 @@ export const runTick = (world: World, store: EntityStore, commands: TickCommand[
           console.error(`[channel:reject] ${p.playerId} slot=${cmd.channel.slot} kind=${cmd.channel.kind}: ${cr.reason}`);
         }
       }
+      if (cmd.fire) {
+        // M6: weapon fire (GDD §11) — the host has already rewound the aim to
+        // the client tick and validated the rewind window (T09/T19).
+        const fireOpts: { targetEntityId?: string; reload?: boolean } = {};
+        if (cmd.fire.targetEntityId !== undefined) fireOpts.targetEntityId = cmd.fire.targetEntityId;
+        if (cmd.fire.reload !== undefined) fireOpts.reload = cmd.fire.reload;
+        const fr: FireResult = resolveFire(world, store, p, cmd.fire.clientTick, cmd.fire.aim, fireOpts);
+        if (fr.ok) {
+          for (const h of fr.hits) events.combatHits.push(h);
+          if (fr.reloadStarted && fr.loadedAfter >= 0) {
+            // reload started: no magazine change yet (refill on completion)
+          }
+        } else {
+          events.fireRejected.push({ playerId: p.playerId, reason: fr.reason ?? "unknown" });
+        }
+      }
     }
     if (last?.heldItemId !== undefined) p.heldItemId = (last.heldItemId ?? null) as PlayerEntity["heldItemId"];
 
@@ -317,6 +393,9 @@ export const runTick = (world: World, store: EntityStore, commands: TickCommand[
       events.moved.push({ playerId: p.playerId, x: p.position.x, y: p.position.y, z: p.position.z });
       void moving;
     }
+
+    // M6: record this tick's pose for lag compensation (GDD §11 rewind)
+    p.poseHistory.record(world.clock.tick, p.position);
 
     // 7. survival: every live player, whether or not they sent input
     const moving = Math.abs(p.position.x - p.prevPosition.x) > 0 || Math.abs(p.position.z - p.prevPosition.z) > 0;
@@ -361,6 +440,20 @@ export const runTick = (world: World, store: EntityStore, commands: TickCommand[
   // 7f. M5: wildlife spawn + advance (GDD §12)
   events.animalsSpawned.push(...spawnWildlife(world, store));
   events.animalsDespawned.push(...advanceWildlife(world, store));
+
+  // 7g. M6: combat advances (GDD §11) — magazine reloads, live projectiles
+  //     (sweep-hit at the shooter's rewound tick, recoverable misses), and
+  //     explosive fuses (structure splash + character damage).
+  events.weaponReloads.push(...advanceWeapons(world, store));
+  const proj = advanceProjectiles(world, store);
+  events.combatHits.push(...proj.hits);
+  for (const det of detonateFuses(world, store)) {
+    events.combatHits.push(...det.hits);
+    events.detonations.push({ fuseId: det.fuseId, ownerId: det.ownerId, weaponItemId: det.weaponItemId, structures: det.structures });
+    for (const s of det.structures) {
+      if (s.destroyed) events.destroyed.push(s.structureEntityId);
+    }
+  }
 
   return events;
 };

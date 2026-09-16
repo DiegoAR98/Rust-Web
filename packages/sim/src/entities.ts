@@ -5,6 +5,7 @@
 import type { EntityId, PlayerId, Vec3, Vitals, ItemStack, ItemId } from "@dustfall/contracts";
 import { freshVitals, INVENTORY_SLOTS, type EquipmentSlot, EQUIPMENT_SLOTS } from "@dustfall/contracts";
 import { createEntityId } from "./ids.js";
+import { PositionHistory, AimHistory } from "./hitbox.js";
 
 export type Posture = "standing" | "crouching";
 
@@ -58,6 +59,21 @@ export interface PlayerEntity {
   } | null;
   /** M5: shared 4 s medical cooldown (GDD §6: prevents bandage/medkit spam) */
   medicalCooldownUntilTick: number;
+  /**
+   * M6: weapon state (GDD §11). Magazine (loaded ammo) per owned weapon item;
+   * an in-flight reload refills the held weapon's magazine from the inventory
+   * ammo stack on completion.
+   */
+  weapon: {
+    loadedByItemId: Record<string, number>;
+    reloading: { weaponItemId: string; completesAtTick: number; /** loaded before the reload started */ resumeAtLoaded: number } | null;
+  };
+  /** M6: fire cadence — tick until which this player may not fire again */
+  fireCooldownUntilTick: number;
+  /** M6: 20-tick position ring for lag compensation (GDD §11 rewind) */
+  poseHistory: PositionHistory;
+  /** M6: client-tick → observed aim ring (rewind + aim-delta sanity, T19) */
+  aimHistory: AimHistory;
   /** true while a death transaction is in flight */
   dead: boolean;
   /** ticks since last tick the player was alive */
@@ -153,6 +169,8 @@ export interface AnimalEntity {
   home: Vec3;
   /** true when this tick's damage killed it (loot drops this tick) */
   dying: boolean;
+  /** M6: 20-tick position ring so ranged shots rewind to its pose (GDD §11) */
+  poseHistory: PositionHistory;
 }
 
 /**
@@ -172,6 +190,51 @@ export interface ContainerEntity {
   refillAtTick: number;
 }
 
+/**
+ * M6: a live projectile in flight (GDD §11: the bow's arrow is a physical
+ * projectile with gravity; firearms are hitscan, so they never spawn one).
+ * Recoverable on terrain: an arrow that lands in the world becomes a ground
+ * item so it can be picked back up (GDD §11 "recoverable misses").
+ */
+export interface ProjectileEntity {
+  id: EntityId;
+  kind: "projectile";
+  /** owning item (arrow) */
+  contentId: string;
+  /** the weapon that launched it (damage comes from this, not the ammo item) */
+  weaponItemId: string;
+  /** shooter's player id (provenance for loot + no self-hit) */
+  ownerId: string;
+  position: Vec3;
+  /** cm/s */
+  velocity: Vec3;
+  /** spawn tick */
+  bornAtTick: number;
+  /** absolute tick the projectile despawns (recovery or removal) */
+  expireAtTick: number;
+  /** M6: server tick the shot resolves against for target rewinding (T10) */
+  rewindServerTick: number;
+}
+
+/**
+ * M6: an in-fuse explosive (hand grenade / planted charge, GDD §11).
+ * Detonates at `detonateAtTick`; the structure target (if any) takes the
+ * flat structure damage, characters inside the splash radius take the
+ * character damage, and structures inside the splash radius take the
+ * structure damage (predictable splash).
+ */
+export interface FuseEntity {
+  id: EntityId;
+  kind: "fuse";
+  contentId: string;
+  ownerId: string;
+  position: Vec3;
+  /** the structure entity this charge was planted on (charges only) */
+  targetStructureId: string | null;
+  /** absolute tick the fuse reaches zero */
+  detonateAtTick: number;
+}
+
 export type Entity =
   | PlayerEntity
   | WorldEntity
@@ -179,7 +242,9 @@ export type Entity =
   | GroundItemEntity
   | StructureEntity
   | AnimalEntity
-  | ContainerEntity;
+  | ContainerEntity
+  | ProjectileEntity
+  | FuseEntity;
 
 /**
  * Entity store with deterministic ascending-EntityId iteration.
@@ -271,6 +336,10 @@ export const newPlayer = (
   craft: null,
   channel: null,
   medicalCooldownUntilTick: 0,
+  weapon: { loadedByItemId: {}, reloading: null },
+  fireCooldownUntilTick: 0,
+  poseHistory: new PositionHistory(),
+  aimHistory: new AimHistory(),
   dead: false,
   deadTicks: 0,
 });
